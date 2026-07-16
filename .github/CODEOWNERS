@@ -1,22 +1,20 @@
+# Code owners for the clique-cancun fork.
 # Lines starting with '#' are comments.
 # Each line is a file pattern followed by one or more owners.
 
-accounts/usbwallet              @karalabe
-accounts/scwallet               @gballet
-accounts/abi                    @gballet @MariusVanDerWijden
-cmd/clef                        @holiman
-consensus                       @karalabe
-core/                           @karalabe @holiman @rjl493456442
-eth/                            @karalabe @holiman @rjl493456442
-eth/catalyst/                   @gballet
-eth/tracers/                    @s1na
-graphql/                        @s1na
-les/                            @zsfelfoldi @rjl493456442
-light/                          @zsfelfoldi @rjl493456442
-node/                           @fjl
-p2p/                            @fjl @zsfelfoldi
-rpc/                            @fjl @holiman
-p2p/simulations                 @fjl
-p2p/protocols                   @fjl
-p2p/testing                     @fjl
-signer/                         @holiman
+# Default owner for everything in this fork.
+*                                   @gieworld
+
+# Fork-specific surface (Clique + Cancun + free gas). Changes here touch
+# consensus / block validity — review with extra care.
+/consensus/clique/                  @gieworld
+/consensus/misc/eip1559/            @gieworld
+/params/config.go                   @gieworld
+/core/evm.go                        @gieworld
+/core/genesis.go                    @gieworld
+/miner/worker.go                    @gieworld
+/eth/fetcher/                       @gieworld
+/internal/era/                      @gieworld
+/smoke-test/                        @gieworld
+/docs/                              @gieworld
+/CHANGELOG.md                       @gieworld

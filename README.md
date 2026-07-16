@@ -1,16 +1,58 @@
-## Go Ethereum
+# PureChain Testnet — geth client (`go-ethereum v1.13.15` fork)
 
-Golang execution layer implementation of the Ethereum protocol.
+The execution client for the **PureChain testnet**: a patched **go-ethereum
+v1.13.15** that runs a **Clique (Proof-of-Authority)** network on the
+**Shanghai** and **Cancun** hard forks **without a beacon chain / without the
+Merge**, in **free-gas** mode (zero base fee).
 
-[![API Reference](
-https://pkg.go.dev/badge/github.com/ethereum/go-ethereum
-)](https://pkg.go.dev/github.com/ethereum/go-ethereum?tab=doc)
-[![Go Report Card](https://goreportcard.com/badge/github.com/ethereum/go-ethereum)](https://goreportcard.com/report/github.com/ethereum/go-ethereum)
-[![Travis](https://app.travis-ci.com/ethereum/go-ethereum.svg?branch=master)](https://app.travis-ci.com/github/ethereum/go-ethereum)
-[![Discord](https://img.shields.io/badge/discord-join%20chat-blue.svg)](https://discord.gg/nthXNEv)
+Upstream geth requires the PoS Merge for any post-Shanghai fork, and **removed
+Clique entirely in v1.14** — so no stock geth release can validate a chain like
+this (it panics on the first post-activation block). This fork keeps Clique alive
+and teaches it the post-Merge header fields, so PureChain can run modern EVM
+features (PUSH0, transient storage, blob-carrying txs, EIP-4788, …) on a
+permissioned validator set.
 
-Automated builds are available for stable releases and the unstable master branch. Binary
-archives are published at https://geth.ethereum.org/downloads/.
+> **Network parameters** (chainId, validators, activation times) are provisioned
+> per deployment and are **not** hard-coded here — the examples in this repo use a
+> generic placeholder chainId `424242`. See [`network/`](network/) to generate a
+> genesis for your own set of signers.
+
+> This is a **fork of [ethereum/go-ethereum](https://github.com/ethereum/go-ethereum)**,
+> pinned to the `v1.13.15` release (the last version that shipped Clique). It is
+> **not affiliated with or endorsed by** the go-ethereum project. Licensed under
+> GPL-3.0 / LGPL-3.0 exactly as upstream — see [`COPYING`](COPYING),
+> [`COPYING.LESSER`](COPYING.LESSER), and [`AUTHORS`](AUTHORS).
+
+### What changed
+
+Roughly **~220 lines across 14 files**, every hunk gated on `Clique != nil` /
+`zeroBaseFee` / `IsShanghai` so non-Clique (mainnet/PoW/PoS) behaviour is
+untouched. The consensus-affecting changes are what make this a real fork rather
+than config. See **[`CHANGELOG.md`](CHANGELOG.md)** for the full, per-file ledger.
+
+| Area | Key files | Summary |
+|------|-----------|---------|
+| Clique → Cancun | `consensus/clique/clique.go`, `params/config.go`, `core/evm.go`, `miner/worker.go` | Accept & seal Shanghai/Cancun headers (no panic), enable the EVM forks for Clique, zero PREVRANDAO + zero `parentBeaconRoot` |
+| Free gas | `consensus/misc/eip1559`, `core/genesis.go`, `eth/backend.go`, `internal/ethapi` | `zeroBaseFee` genesis flag pins base fee to 0; allow `--miner.gasprice 0`; accept zero-fee txs over RPC |
+| Non-merge fixes | `eth/fetcher/block_fetcher.go`, `internal/era`, `core/txpool/blobpool` | Preserve block withdrawals on gossip/history paths upstream assumes die at the Merge |
+
+### Documentation
+
+| Doc | What it covers |
+|-----|----------------|
+| [`docs/implementation-plan.md`](docs/implementation-plan.md) | Full design + security rationale |
+| [`docs/operator-guide.md`](docs/operator-guide.md) | Build, genesis, running signer nodes |
+| [`docs/upgrade-runbook.md`](docs/upgrade-runbook.md) | In-place Istanbul → Cancun upgrade of a live chain |
+| [`docs/cancun-gas-free-report.md`](docs/cancun-gas-free-report.md) | Why the network stays gas-free and safe |
+| [`network/`](network/) | Example genesis + `gen-genesis.sh` generator (generic chainId `424242`) |
+| [`smoke-test/`](smoke-test/) | Dockerized regression/compat suite (`run-all.sh`) |
+
+Report security issues privately — see [`SECURITY.md`](SECURITY.md).
+
+---
+
+The remainder of this document is inherited from upstream go-ethereum and
+describes the base client. All build/CLI instructions below apply to this fork.
 
 ## Building the source
 
@@ -317,35 +359,24 @@ transactions are accepted at (`--miner.gasprice`).
 
 ## Contribution
 
-Thank you for considering helping out with the source code! We welcome contributions
-from anyone on the internet, and are grateful for even the smallest of fixes!
+Contributions to the fork-specific changes are welcome. Please fork, fix, commit,
+and open a pull request against the **`clique-cancun`** branch (this fork's default
+branch), not `master`. Keep fork changes gated on `Clique != nil` / `zeroBaseFee`
+so stock behaviour stays intact, and add or update a `smoke-test/` case when you
+change consensus or free-gas behaviour.
 
-If you'd like to contribute to go-ethereum, please fork, fix, commit and send a pull request
-for the maintainers to review and merge into the main code base. If you wish to submit
-more complex changes though, please check up with the core devs first on [our Discord Server](https://discord.gg/invite/nthXNEv)
-to ensure those changes are in line with the general philosophy of the project and/or get
-some early feedback which can make both your efforts much lighter as well as our review
-and merge procedures quick and simple.
-
-Please make sure your contributions adhere to our coding guidelines:
+Please make sure your contributions adhere to the coding guidelines:
 
  * Code must adhere to the official Go [formatting](https://golang.org/doc/effective_go.html#formatting)
    guidelines (i.e. uses [gofmt](https://golang.org/cmd/gofmt/)).
  * Code must be documented adhering to the official Go [commentary](https://golang.org/doc/effective_go.html#commentary)
    guidelines.
- * Pull requests need to be based on and opened against the `master` branch.
  * Commit messages should be prefixed with the package(s) they modify.
    * E.g. "eth, rpc: make trace configs optional"
 
-Please see the [Developers' Guide](https://geth.ethereum.org/docs/developers/geth-developer/dev-guide)
-for more details on configuring your environment, managing project dependencies, and
-testing procedures.
-
-### Contributing to geth.ethereum.org
-
-For contributions to the [go-ethereum website](https://geth.ethereum.org), please checkout and raise pull requests against the `website` branch.
-For more detailed instructions please see the `website` branch [README](https://github.com/ethereum/go-ethereum/tree/website#readme) or the 
-[contributing](https://geth.ethereum.org/docs/developers/geth-developer/contributing) page of the website.
+For changes to the underlying client that are not Clique/Cancun/free-gas specific,
+consider contributing them upstream to [go-ethereum](https://github.com/ethereum/go-ethereum)
+instead.
 
 ## License
 

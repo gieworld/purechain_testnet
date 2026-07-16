@@ -125,6 +125,7 @@ type bodyFilterTask struct {
 	peer         string                 // The source peer of block bodies
 	transactions [][]*types.Transaction // Collection of transactions per block bodies
 	uncles       [][]*types.Header      // Collection of uncles per block bodies
+	withdrawals  [][]*types.Withdrawal  // Collection of withdrawals per block bodies
 	time         time.Time              // Arrival time of the blocks' contents
 }
 
@@ -302,8 +303,8 @@ func (f *BlockFetcher) FilterHeaders(peer string, headers []*types.Header, time 
 
 // FilterBodies extracts all the block bodies that were explicitly requested by
 // the fetcher, returning those that should be handled differently.
-func (f *BlockFetcher) FilterBodies(peer string, transactions [][]*types.Transaction, uncles [][]*types.Header, time time.Time) ([][]*types.Transaction, [][]*types.Header) {
-	log.Trace("Filtering bodies", "peer", peer, "txs", len(transactions), "uncles", len(uncles))
+func (f *BlockFetcher) FilterBodies(peer string, transactions [][]*types.Transaction, uncles [][]*types.Header, withdrawals [][]*types.Withdrawal, time time.Time) ([][]*types.Transaction, [][]*types.Header, [][]*types.Withdrawal) {
+	log.Trace("Filtering bodies", "peer", peer, "txs", len(transactions), "uncles", len(uncles), "withdrawals", len(withdrawals))
 
 	// Send the filter channel to the fetcher
 	filter := make(chan *bodyFilterTask)
@@ -311,20 +312,20 @@ func (f *BlockFetcher) FilterBodies(peer string, transactions [][]*types.Transac
 	select {
 	case f.bodyFilter <- filter:
 	case <-f.quit:
-		return nil, nil
+		return nil, nil, nil
 	}
 	// Request the filtering of the body list
 	select {
-	case filter <- &bodyFilterTask{peer: peer, transactions: transactions, uncles: uncles, time: time}:
+	case filter <- &bodyFilterTask{peer: peer, transactions: transactions, uncles: uncles, withdrawals: withdrawals, time: time}:
 	case <-f.quit:
-		return nil, nil
+		return nil, nil, nil
 	}
 	// Retrieve the bodies remaining after filtering
 	select {
 	case task := <-filter:
-		return task.transactions, task.uncles
+		return task.transactions, task.uncles, task.withdrawals
 	case <-f.quit:
-		return nil, nil
+		return nil, nil, nil
 	}
 }
 
@@ -540,9 +541,14 @@ func (f *BlockFetcher) loop() {
 					select {
 					case res := <-resCh:
 						res.Done <- nil
-						// Ignoring withdrawals here, since the block fetcher is not used post-merge.
-						txs, uncles, _ := res.Res.(*eth.BlockBodiesResponse).Unpack()
-						f.FilterBodies(peer, txs, uncles, time.Now())
+						// Withdrawals must be threaded through the fetcher: on a chain that
+						// runs Shanghai/Cancun without a beacon chain (e.g. Clique PoA), block
+						// gossip stays active, so the fetcher reassembles propagated blocks.
+						// Dropping withdrawals here would rebuild post-Shanghai blocks with a
+						// nil withdrawals list and fail body validation ("missing withdrawals
+						// in block body"). Upstream ignores them, assuming a post-merge network.
+						txs, uncles, withdrawals := res.Res.(*eth.BlockBodiesResponse).Unpack()
+						f.FilterBodies(peer, txs, uncles, withdrawals, time.Now())
 
 					case <-timeout.C:
 						// The peer didn't respond in time. The request
@@ -598,11 +604,21 @@ func (f *BlockFetcher) loop() {
 						announce.header = header
 						announce.time = task.time
 
-						// If the block is empty (header only), short circuit into the final import queue
-						if header.TxHash == types.EmptyTxsHash && header.UncleHash == types.EmptyUncleHash {
+						// If the block is empty (header only), short circuit into the final
+						// import queue. A block is only truly body-less when it also carries
+						// no withdrawals: post-Shanghai headers commit to a withdrawals list,
+						// so when that commitment is the empty-list hash we must attach a
+						// non-nil empty slice (otherwise body validation reports "missing
+						// withdrawals in block body"). If the header commits to real
+						// withdrawals, fall through and fetch the body to obtain them.
+						withdrawalsEmpty := header.WithdrawalsHash == nil || *header.WithdrawalsHash == types.EmptyWithdrawalsHash
+						if header.TxHash == types.EmptyTxsHash && header.UncleHash == types.EmptyUncleHash && withdrawalsEmpty {
 							log.Trace("Block empty, skipping body retrieval", "peer", announce.origin, "number", header.Number, "hash", header.Hash())
 
 							block := types.NewBlockWithHeader(header)
+							if header.WithdrawalsHash != nil {
+								block = block.WithWithdrawals([]*types.Withdrawal{})
+							}
 							block.ReceivedAt = task.time
 
 							complete = append(complete, block)
@@ -686,7 +702,14 @@ func (f *BlockFetcher) loop() {
 						// Mark the body matched, reassemble if still unknown
 						matched = true
 						if f.getBlock(hash) == nil {
-							block := types.NewBlockWithHeader(announce.header).WithBody(task.transactions[i], task.uncles[i])
+							// Attach the withdrawals from the fetched body so post-Shanghai
+							// blocks carry a non-nil withdrawals list matching the header's
+							// WithdrawalsHash; otherwise body validation rejects them.
+							var withdrawals []*types.Withdrawal
+							if i < len(task.withdrawals) {
+								withdrawals = task.withdrawals[i]
+							}
+							block := types.NewBlockWithHeader(announce.header).WithBody(task.transactions[i], task.uncles[i]).WithWithdrawals(withdrawals)
 							block.ReceivedAt = task.time
 							blocks = append(blocks, block)
 						} else {
@@ -696,6 +719,9 @@ func (f *BlockFetcher) loop() {
 					if matched {
 						task.transactions = append(task.transactions[:i], task.transactions[i+1:]...)
 						task.uncles = append(task.uncles[:i], task.uncles[i+1:]...)
+						if i < len(task.withdrawals) {
+							task.withdrawals = append(task.withdrawals[:i], task.withdrawals[i+1:]...)
+						}
 						i--
 						continue
 					}

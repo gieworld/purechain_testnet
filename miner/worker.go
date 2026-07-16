@@ -984,7 +984,20 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 			header.GasLimit = core.CalcGasLimit(parentGasLimit, w.config.GasCeil)
 		}
 	}
-	// Apply EIP-4844, EIP-4788.
+	// Run the consensus preparation with the default or customized consensus engine.
+	// NOTE: Clique's Prepare rewrites header.Time (to parent.Time+Period, clamped
+	// up to now), so any timestamp-based fork gating MUST be evaluated AFTER this
+	// call — see the EIP-4844 block below.
+	if err := w.engine.Prepare(w.chain, header); err != nil {
+		log.Error("Failed to prepare header for sealing", "err", err)
+		return nil, err
+	}
+	// Apply EIP-4844, EIP-4788. Gated on the FINAL header.Time (post-Prepare).
+	// With Clique the engine rewrites the timestamp above, so evaluating IsCancun
+	// against the pre-Prepare time could skip these fields on the exact block whose
+	// final time crosses CancunTime, yielding a header that fails its own Cancun
+	// verification (missing excessBlobGas) at the fork boundary. PoS keeps a fixed
+	// timestamp, so this reordering is a no-op for the beacon path.
 	if w.chainConfig.IsCancun(header.Number, header.Time) {
 		var excessBlobGas uint64
 		if w.chainConfig.IsCancun(parent.Number, parent.Time) {
@@ -995,12 +1008,14 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 		}
 		header.BlobGasUsed = new(uint64)
 		header.ExcessBlobGas = &excessBlobGas
-		header.ParentBeaconRoot = genParams.beaconRoot
-	}
-	// Run the consensus preparation with the default or customized consensus engine.
-	if err := w.engine.Prepare(w.chain, header); err != nil {
-		log.Error("Failed to prepare header for sealing", "err", err)
-		return nil, err
+		if genParams.beaconRoot != nil {
+			header.ParentBeaconRoot = genParams.beaconRoot
+		} else {
+			// Clique (and any non-beacon engine) has no beacon chain to source a
+			// parent beacon root from; use the zero hash so the Cancun header field
+			// is present and identical between mining and import.
+			header.ParentBeaconRoot = new(common.Hash)
+		}
 	}
 	// Could potentially happen if starting to mine in an odd state.
 	// Note genParams.coinbase can be different with header.Coinbase

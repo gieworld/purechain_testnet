@@ -816,9 +816,14 @@ func (p *BlobPool) Reset(oldHead, newHead *types.Header) {
 			p.insertFeed.Send(core.NewTxsEvent{Txs: adds})
 		}
 	}
-	// Flush out any blobs from limbo that are older than the latest finality
+	// Flush out any blobs from limbo that are older than the latest finality.
+	// A chain without a beacon chain (e.g. Clique PoA) never advances a finalized
+	// block, so guard against the nil case here: limbo.finalize(nil) is a no-op
+	// but logs an error on every block, which is misleading on such chains.
 	if p.chain.Config().IsCancun(p.head.Number, p.head.Time) {
-		p.limbo.finalize(p.chain.CurrentFinalBlock())
+		if final := p.chain.CurrentFinalBlock(); final != nil {
+			p.limbo.finalize(final)
+		}
 	}
 	// Reset the price heap for the new set of basefee/blobfee pairs
 	var (

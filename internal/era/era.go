@@ -150,7 +150,10 @@ func (e *Era) GetBlockByNumber(num uint64) (*types.Block, error) {
 	if err := rlp.Decode(r, &body); err != nil {
 		return nil, err
 	}
-	return types.NewBlockWithHeader(&header).WithBody(body.Transactions, body.Uncles), nil
+	// Preserve withdrawals so post-Shanghai blocks keep a non-nil withdrawals
+	// list matching the header's WithdrawalsHash (otherwise re-import fails body
+	// validation with "missing withdrawals in block body").
+	return types.NewBlockWithHeader(&header).WithBody(body.Transactions, body.Uncles).WithWithdrawals(body.Withdrawals), nil
 }
 
 // Accumulator reads the accumulator entry in the Era1 file.

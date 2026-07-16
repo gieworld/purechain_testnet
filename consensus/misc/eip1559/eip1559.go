@@ -55,6 +55,12 @@ func VerifyEIP1559Header(config *params.ChainConfig, parent, header *types.Heade
 
 // CalcBaseFee calculates the basefee of the header.
 func CalcBaseFee(config *params.ChainConfig, parent *types.Header) *big.Int {
+	// Free-gas networks pin the base fee to zero. This is honoured identically by
+	// the miner and by VerifyEIP1559Header (which calls this function), so block
+	// production and import stay consistent.
+	if config.ZeroBaseFee {
+		return new(big.Int)
+	}
 	// If the current block is the first EIP-1559 block, return the InitialBaseFee.
 	if !config.IsLondon(parent.Number) {
 		return new(big.Int).SetUint64(params.InitialBaseFee)

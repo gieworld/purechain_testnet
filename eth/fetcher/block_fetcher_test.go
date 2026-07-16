@@ -82,6 +82,58 @@ func makeChain(n int, seed byte, parent *types.Block) ([]common.Hash, map[common
 	return hashes, blockm
 }
 
+// makeShanghaiChain builds a chain of n post-Shanghai blocks on top of parent.
+// Unlike makeChain (which uses the ethash faker and so never sets a withdrawals
+// commitment), every block here carries the empty (non-nil) withdrawals list a
+// Clique/Cancun network produces, so its header commits to EmptyWithdrawalsHash.
+// Even-indexed blocks include a transaction (exercising the fetcher's
+// body-completion path); the rest are header-only (the empty-body short circuit).
+// The fetcher must reassemble both without dropping the withdrawals list.
+func makeShanghaiChain(n int, seed byte, parent *types.Block) ([]common.Hash, map[common.Hash]*types.Block) {
+	cfg := *params.TestChainConfig
+	shanghai := uint64(0)
+	cfg.ShanghaiTime = &shanghai
+
+	hasher := trie.NewStackTrie(nil)
+	blocks := make([]*types.Block, n)
+	prev := parent
+	for i := 0; i < n; i++ {
+		num := prev.NumberU64() + 1
+		blockTime := prev.Time() + 10
+		var txs []*types.Transaction
+		if i%2 == 0 {
+			signer := types.MakeSigner(&cfg, new(big.Int).SetUint64(num), blockTime)
+			tx, err := types.SignTx(types.NewTransaction(uint64(i), common.Address{seed}, big.NewInt(1000), params.TxGas, big.NewInt(params.InitialBaseFee), nil), signer, testKey)
+			if err != nil {
+				panic(err)
+			}
+			txs = []*types.Transaction{tx}
+		}
+		header := &types.Header{
+			ParentHash: prev.Hash(),
+			Number:     new(big.Int).SetUint64(num),
+			GasLimit:   params.GenesisGasLimit,
+			Time:       blockTime,
+			Difficulty: big.NewInt(1),
+			Coinbase:   common.Address{seed},
+			Root:       types.EmptyRootHash,
+			BaseFee:    big.NewInt(params.InitialBaseFee),
+		}
+		// Empty (non-nil) withdrawals => header.WithdrawalsHash == EmptyWithdrawalsHash.
+		blocks[i] = types.NewBlockWithWithdrawals(header, txs, nil, nil, []*types.Withdrawal{}, hasher)
+		prev = blocks[i]
+	}
+	hashes := make([]common.Hash, n+1)
+	hashes[len(hashes)-1] = parent.Hash()
+	blockm := make(map[common.Hash]*types.Block, n+1)
+	blockm[parent.Hash()] = parent
+	for i, b := range blocks {
+		hashes[len(hashes)-i-2] = b.Hash()
+		blockm[b.Hash()] = b
+	}
+	return hashes, blockm
+}
+
 // fetcherTester is a test simulator for mocking out local block chain.
 type fetcherTester struct {
 	fetcher *BlockFetcher
@@ -236,11 +288,13 @@ func (f *fetcherTester) makeBodyFetcher(peer string, blocks map[common.Hash]*typ
 		// Gather the block bodies to return
 		transactions := make([][]*types.Transaction, 0, len(hashes))
 		uncles := make([][]*types.Header, 0, len(hashes))
+		withdrawals := make([][]*types.Withdrawal, 0, len(hashes))
 
 		for _, hash := range hashes {
 			if block, ok := closure[hash]; ok {
 				transactions = append(transactions, block.Transactions())
 				uncles = append(uncles, block.Uncles())
+				withdrawals = append(withdrawals, block.Withdrawals())
 			}
 		}
 		// Return on a new thread
@@ -249,6 +303,7 @@ func (f *fetcherTester) makeBodyFetcher(peer string, blocks map[common.Hash]*typ
 			bodies[i] = &eth.BlockBody{
 				Transactions: txs,
 				Uncles:       uncles[i],
+				Withdrawals:  withdrawals[i],
 			}
 		}
 		req := &eth.Request{
@@ -389,6 +444,47 @@ func testSequentialAnnouncements(t *testing.T, light bool) {
 			imported <- block
 		}
 	}
+	for i := len(hashes) - 2; i >= 0; i-- {
+		tester.fetcher.Notify("valid", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
+		verifyImportEvent(t, imported, true)
+	}
+	verifyImportDone(t, imported)
+	verifyChainHeight(t, tester, uint64(len(hashes)-1))
+}
+
+// TestFetcherReassemblesWithdrawals verifies that blocks propagated via hash
+// announcement (header + body fetch) are reassembled with their withdrawals list
+// intact. On a Clique/Cancun network the block fetcher stays active (no merge),
+// so a reassembled post-Shanghai block must carry a non-nil withdrawals list that
+// matches the header's WithdrawalsHash; otherwise it fails body validation with
+// "missing withdrawals in block body". Regression test for that bug.
+func TestFetcherReassemblesWithdrawals(t *testing.T) {
+	// A mix of transaction-bearing blocks (body-completion path) and empty blocks
+	// (empty-body short circuit) so both reassembly paths are exercised.
+	hashes, blocks := makeShanghaiChain(8, 0, genesis)
+
+	tester := newTester(false)
+	defer tester.fetcher.Stop()
+	headerFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
+	bodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
+
+	imported := make(chan interface{})
+	tester.fetcher.importedHook = func(header *types.Header, block *types.Block) {
+		if block == nil {
+			t.Fatalf("Fetcher tried to import empty block")
+		}
+		if block.Header().WithdrawalsHash == nil {
+			t.Fatalf("block %d has no withdrawals commitment", block.NumberU64())
+		}
+		if block.Withdrawals() == nil {
+			t.Fatalf("block %d reassembled with nil withdrawals (would fail body validation)", block.NumberU64())
+		}
+		if got := types.DeriveSha(block.Withdrawals(), trie.NewStackTrie(nil)); got != *block.Header().WithdrawalsHash {
+			t.Fatalf("block %d withdrawals root mismatch: have %x want %x", block.NumberU64(), got, *block.Header().WithdrawalsHash)
+		}
+		imported <- block
+	}
+
 	for i := len(hashes) - 2; i >= 0; i-- {
 		tester.fetcher.Notify("valid", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
 		verifyImportEvent(t, imported, true)

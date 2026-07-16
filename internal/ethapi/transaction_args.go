@@ -203,7 +203,8 @@ func (args *TransactionArgs) setFeeDefaults(ctx context.Context, b Backend) erro
 	eip1559ParamsSet := args.MaxFeePerGas != nil && args.MaxPriorityFeePerGas != nil
 	// Sanity check the EIP-1559 fee parameters if present.
 	if args.GasPrice == nil && eip1559ParamsSet {
-		if args.MaxFeePerGas.ToInt().Sign() == 0 {
+		// Free-gas (ZeroBaseFee) chains permit a zero maxFeePerGas.
+		if args.MaxFeePerGas.ToInt().Sign() == 0 && !b.ChainConfig().ZeroBaseFee {
 			return errors.New("maxFeePerGas must be non-zero")
 		}
 		if args.MaxFeePerGas.ToInt().Cmp(args.MaxPriorityFeePerGas.ToInt()) < 0 {
@@ -215,8 +216,9 @@ func (args *TransactionArgs) setFeeDefaults(ctx context.Context, b Backend) erro
 	// Sanity check the non-EIP-1559 fee parameters.
 	isLondon := b.ChainConfig().IsLondon(head.Number)
 	if args.GasPrice != nil && !eip1559ParamsSet {
-		// Zero gas-price is not allowed after London fork
-		if args.GasPrice.ToInt().Sign() == 0 && isLondon {
+		// Zero gas-price is not allowed after London fork, except on free-gas
+		// (ZeroBaseFee) chains where a zero base fee makes it valid.
+		if args.GasPrice.ToInt().Sign() == 0 && isLondon && !b.ChainConfig().ZeroBaseFee {
 			return errors.New("gasPrice must be non-zero after london fork")
 		}
 		return nil // No need to set anything, user already set GasPrice

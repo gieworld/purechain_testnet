@@ -412,6 +412,9 @@ func (g *Genesis) ToBlock() *types.Block {
 	if g.Config != nil && g.Config.IsLondon(common.Big0) {
 		if g.BaseFee != nil {
 			head.BaseFee = g.BaseFee
+		} else if g.Config.ZeroBaseFee {
+			// Free-gas network: start the chain at a zero base fee.
+			head.BaseFee = new(big.Int)
 		} else {
 			head.BaseFee = new(big.Int).SetUint64(params.InitialBaseFee)
 		}

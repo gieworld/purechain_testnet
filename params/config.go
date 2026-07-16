@@ -362,6 +362,12 @@ type ChainConfig struct {
 	// even without having seen the TTD locally (safer long term).
 	TerminalTotalDifficultyPassed bool `json:"terminalTotalDifficultyPassed,omitempty"`
 
+	// ZeroBaseFee, when set, pins the EIP-1559 base fee to zero for the whole
+	// chain (free-gas networks). It is honoured by both block production and
+	// header verification (CalcBaseFee), so it must be identical on every node.
+	// Like other fork settings it lives in the genesis-persisted chain config.
+	ZeroBaseFee bool `json:"zeroBaseFee,omitempty"`
+
 	// Various consensus engines
 	Ethash *EthashConfig `json:"ethash,omitempty"`
 	Clique *CliqueConfig `json:"clique,omitempty"`
@@ -912,6 +918,11 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 	}
 	// disallow setting Merge out of order
 	isMerge = isMerge && c.IsLondon(num)
+	// Clique (PoA) chains never reach the PoS Merge, but must still be able to
+	// activate the post-merge timestamp forks. Scope this to Shanghai/Cancun,
+	// which have been implemented & audited for non-merge operation; leave
+	// Prague/Verkle gated on isMerge until separately reviewed.
+	isShanghaiCapable := isMerge || c.Clique != nil
 	return Rules{
 		ChainID:          new(big.Int).Set(chainID),
 		IsHomestead:      c.IsHomestead(num),
@@ -925,8 +936,8 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsBerlin:         c.IsBerlin(num),
 		IsLondon:         c.IsLondon(num),
 		IsMerge:          isMerge,
-		IsShanghai:       isMerge && c.IsShanghai(num, timestamp),
-		IsCancun:         isMerge && c.IsCancun(num, timestamp),
+		IsShanghai:       isShanghaiCapable && c.IsShanghai(num, timestamp),
+		IsCancun:         isShanghaiCapable && c.IsCancun(num, timestamp),
 		IsPrague:         isMerge && c.IsPrague(num, timestamp),
 		IsVerkle:         isMerge && c.IsVerkle(num, timestamp),
 	}

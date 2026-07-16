@@ -1,6 +1,6 @@
 ---
 name: Report a bug
-about: Something with go-ethereum is not working as expected
+about: Something with this Clique+Cancun fork is not working as expected
 title: ''
 labels: 'type:bug'
 assignees: ''
@@ -9,9 +9,9 @@ assignees: ''
 #### System information
 
 Geth version: `geth version`
-CL client & version: e.g. lighthouse/nimbus/prysm@v1.0.0
+Network: Clique period, fork activation (Shanghai/Cancun times), free-gas on/off
 OS & Version: Windows/Linux/OSX
-Commit hash : (if `develop`)
+Commit hash :
 
 #### Expected behaviour
 

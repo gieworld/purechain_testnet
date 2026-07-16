@@ -18,12 +18,14 @@ package core
 
 import (
 	"math/big"
+	"reflect"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
 )
 
@@ -35,6 +37,20 @@ type ChainContext interface {
 
 	// GetHeader returns the header corresponding to the hash/number argument pair.
 	GetHeader(common.Hash, uint64) *types.Header
+
+	// Config retrieves the chain's fork configuration.
+	Config() *params.ChainConfig
+}
+
+// chainContextIsNil reports whether the ChainContext is unusable, covering both
+// an untyped nil interface and a typed-nil pointer (e.g. chain generation passes
+// a (*BlockChain)(nil)). Used to guard Config()/Engine() access.
+func chainContextIsNil(chain ChainContext) bool {
+	if chain == nil {
+		return true
+	}
+	v := reflect.ValueOf(chain)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 // NewEVMBlockContext creates a new context for use in the EVM.
@@ -60,6 +76,15 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 	}
 	if header.Difficulty.Cmp(common.Big0) == 0 {
 		random = &header.MixDigest
+	} else if !chainContextIsNil(chain) {
+		// Clique (PoA) has no RANDAO. Once Shanghai is active, opcode 0x44 becomes
+		// PREVRANDAO (opRandom), which dereferences Context.Random; expose a stable
+		// zero value so it does not nil-panic. Gated on IsShanghai so PRE-Shanghai
+		// blocks keep 0x44 == DIFFICULTY (no change to existing chains / history).
+		// MixDigest is zero-enforced for Clique, so it is the correct zero value.
+		if cfg := chain.Config(); cfg != nil && cfg.Clique != nil && cfg.IsShanghai(header.Number, header.Time) {
+			random = &header.MixDigest
+		}
 	}
 	return vm.BlockContext{
 		CanTransfer: CanTransfer,

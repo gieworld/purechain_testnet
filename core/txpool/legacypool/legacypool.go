@@ -155,13 +155,17 @@ var DefaultConfig = Config{
 
 // sanitize checks the provided user configurations and changes anything that's
 // unreasonable or unworkable.
-func (config *Config) sanitize() Config {
+func (config *Config) sanitize(chainconfig *params.ChainConfig) Config {
 	conf := *config
 	if conf.Rejournal < time.Second {
 		log.Warn("Sanitizing invalid txpool journal time", "provided", conf.Rejournal, "updated", time.Second)
 		conf.Rejournal = time.Second
 	}
-	if conf.PriceLimit < 1 {
+	// PriceLimit may be 0 only on free-gas (zeroBaseFee) networks, where every
+	// node — including non-mining relay/RPC nodes — must accept and propagate
+	// zero-fee transactions. On any other chain keep the upstream floor so a
+	// misconfigured node does not accept and gossip unmineable zero-fee spam.
+	if conf.PriceLimit < 1 && (chainconfig == nil || !chainconfig.ZeroBaseFee) {
 		log.Warn("Sanitizing invalid txpool price limit", "provided", conf.PriceLimit, "updated", DefaultConfig.PriceLimit)
 		conf.PriceLimit = DefaultConfig.PriceLimit
 	}
@@ -241,7 +245,7 @@ type txpoolResetRequest struct {
 // transactions from the network.
 func New(config Config, chain BlockChain) *LegacyPool {
 	// Sanitize the input to ensure no vulnerable gas prices are set
-	config = (&config).sanitize()
+	config = (&config).sanitize(chain.Config())
 
 	// Create the transaction pool with its initial settings
 	pool := &LegacyPool{

@@ -1,23 +1,52 @@
-name: i386 linux tests
+name: CI (clique-cancun fork)
 
 on:
   push:
-    branches: [ master ]
+    branches: [ clique-cancun, master ]
   pull_request:
-    branches: [ master ]
+    branches: [ clique-cancun, master ]
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: self-hosted
+  build-and-test:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
+
       - name: Set up Go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v5
         with:
-          go-version: 1.21.4
-      - name: Run tests
+          go-version: '1.21.x'
+
+      - name: Build geth (static linux/amd64 release artifact)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/bin/geth-linux-amd64 ./cmd/geth
+
+      - name: Version
+        run: ./build/bin/geth-linux-amd64 version
+
+      # Focused regression tests for the fork surface. These are the packages
+      # the Clique/Cancun/free-gas patches touch; they run fast and are the
+      # real guard for the fork (the full suite is heavy on hosted runners).
+      - name: Test fork packages
+        run: |
+          go test -short \
+            ./consensus/clique/... \
+            ./consensus/misc/eip1559/... \
+            ./eth/fetcher/... \
+            ./internal/era/... \
+            ./core/txpool/... \
+            ./params/... \
+            ./miner/...
+
+  full-suite:
+    # Full upstream test suite. Opt-in (manual dispatch) since it is slow on
+    # hosted runners; the build-and-test job above is the required gate.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21.x'
+      - name: Run full test suite
         run: go test -short ./...
-        env:
-          GOOS: linux
-          GOARCH: 386

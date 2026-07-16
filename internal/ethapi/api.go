@@ -34,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -86,6 +87,22 @@ func (s *EthereumAPI) MaxPriorityFeePerGas(ctx context.Context) (*hexutil.Big, e
 		return nil, err
 	}
 	return (*hexutil.Big)(tipcap), err
+}
+
+// BlobBaseFee returns the base fee for blob gas at the current head.
+//
+// Backported from upstream go-ethereum (added after v1.13.15). Clients such as
+// the OP Stack op-batcher call eth_blobBaseFee unconditionally during gas
+// estimation — even for non-blob (calldata) transactions — so this RPC must
+// exist for them to build any transaction against this chain. On a chain with
+// no blob activity ExcessBlobGas is zero, so this returns the minimum blob base
+// fee (1 wei); it is computed from the head's ExcessBlobGas when present.
+func (s *EthereumAPI) BlobBaseFee(ctx context.Context) *hexutil.Big {
+	head := s.b.CurrentHeader()
+	if head == nil || head.ExcessBlobGas == nil {
+		return nil
+	}
+	return (*hexutil.Big)(eip4844.CalcBlobFee(*head.ExcessBlobGas))
 }
 
 type feeHistoryResult struct {
@@ -1048,6 +1065,7 @@ func (diff *BlockOverrides) Apply(blockCtx *vm.BlockContext) {
 type ChainContextBackend interface {
 	Engine() consensus.Engine
 	HeaderByNumber(context.Context, rpc.BlockNumber) (*types.Header, error)
+	ChainConfig() *params.ChainConfig
 }
 
 // ChainContext is an implementation of core.ChainContext. It's main use-case
@@ -1064,6 +1082,10 @@ func NewChainContext(ctx context.Context, backend ChainContextBackend) *ChainCon
 
 func (context *ChainContext) Engine() consensus.Engine {
 	return context.b.Engine()
+}
+
+func (context *ChainContext) Config() *params.ChainConfig {
+	return context.b.ChainConfig()
 }
 
 func (context *ChainContext) GetHeader(hash common.Hash, number uint64) *types.Header {
