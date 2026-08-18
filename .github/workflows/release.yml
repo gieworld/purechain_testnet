@@ -1,0 +1,138 @@
+# Builds the PureChain execution client and publishes a GitHub Release
+# whenever a version tag is pushed:
+#
+#     git tag -a v1.0.0 -m "PureChain v1.0.0" && git push origin v1.0.0
+#
+# Binaries are built in a clean CI environment rather than on a developer
+# machine, so anyone can re-run this workflow (or the same `go build` locally)
+# and reproduce the artifacts. Release notes are taken from the top section of
+# CHANGELOG.md, which stays the single source of truth.
+#
+# Uses the GitHub CLI that ships on the runner instead of a third-party release
+# action — one less dependency to trust in the publishing path.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build and publish"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          # Full history so the build stamps a real commit into the binary
+          # (`geth version` must report a commit that exists in this repo).
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21.12"
+          check-latest: false
+
+      - name: Resolve build identity
+        id: id
+        run: |
+          set -euo pipefail
+          # Resolve from the checkout itself, not github.sha — on a manual
+          # workflow_dispatch run github.sha is the default branch, not the tag.
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build static binaries
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.id.outputs.tag }}"
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64; do
+            GOOS="${target%/*}"; GOARCH="${target#*/}"
+            out="dist/purechain-geth-${TAG}-${GOOS}-${GOARCH}"
+            echo "building $out"
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath -o "$out" ./cmd/geth
+          done
+          ls -la dist/
+
+      - name: Verify the stamped commit
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.id.outputs.tag }}"
+          EXPECTED="${{ steps.id.outputs.sha }}"
+          # The amd64 binary runs on the runner, so we can assert directly that
+          # `geth version` reports the commit this release was built from. A
+          # binary with an empty or wrong commit must never ship — an unstamped
+          # build is untraceable back to source, which defeats the point of
+          # publishing it.
+          out="$(./dist/purechain-geth-${TAG}-linux-amd64 version)"
+          echo "$out"
+          stamped="$(echo "$out" | awk '/^Git Commit:/ {print $3}')"
+          if [ "$stamped" != "$EXPECTED" ]; then
+            echo "::error::binary reports commit '$stamped', expected '$EXPECTED'"
+            exit 1
+          fi
+
+      - name: Checksums
+        run: cd dist && sha256sum purechain-geth-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Assemble release notes
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.id.outputs.tag }}"
+          # Curated notes for this tag win; otherwise fall back to the top
+          # section of CHANGELOG.md, which stays the source of truth.
+          if [ -f ".github/release-notes/${TAG}.md" ]; then
+            cp ".github/release-notes/${TAG}.md" notes.md
+          else
+            awk '/^## /{n++} n==1' CHANGELOG.md > notes.md
+          fi
+          {
+            echo
+            echo "---"
+            echo
+            echo "### Verifying this download"
+            echo
+            echo '```'
+            echo "sha256sum -c SHA256SUMS.txt"
+            echo "./purechain-geth-${TAG}-linux-amd64 version"
+            echo '```'
+            echo
+            echo "\`Git Commit\` must read \`${{ steps.id.outputs.sha }}\` — the commit this release was built from."
+            echo
+            echo "Binaries are statically linked (\`CGO_ENABLED=0\`) and need no libc, so they run on"
+            echo "Alpine and glibc images alike. To reproduce them yourself:"
+            echo
+            echo '```'
+            echo "git clone https://github.com/gieworld/purechain_testnet.git && cd purechain_testnet"
+            echo "git checkout ${TAG}"
+            echo "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o geth ./cmd/geth"
+            echo '```'
+          } >> notes.md
+          cat notes.md
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.id.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "PureChain $TAG" \
+              --notes-file notes.md \
+              --verify-tag
+          fi
