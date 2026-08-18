@@ -303,7 +303,13 @@ func testAdjustInterval(t *testing.T, chainConfig *params.ChainConfig, engine co
 			estimate = estimate*(1-intervalAdjustRatio) + intervalAdjustRatio*(min-intervalAdjustBias)
 			wantMinInterval, wantRecommitInterval = 3*time.Second, time.Duration(estimate)*time.Nanosecond
 		case 3:
-			wantMinInterval, wantRecommitInterval = time.Second, time.Second
+			// Sub-second intervals are accepted so a Clique sealer can rebuild
+			// its pending block within the period (upstream removed the floor
+			// entirely along with the payload-builder rewrite).
+			wantMinInterval, wantRecommitInterval = 500*time.Millisecond, 500*time.Millisecond
+		case 4:
+			// Values below the busy-spin guard still sanitize up to the floor.
+			wantMinInterval, wantRecommitInterval = minRecommitInterval, minRecommitInterval
 		}
 
 		// Check interval
@@ -344,6 +350,13 @@ func testAdjustInterval(t *testing.T, chainConfig *params.ChainConfig, engine co
 	}
 
 	w.setRecommitInterval(500 * time.Millisecond)
+	select {
+	case <-progress:
+	case <-time.NewTimer(time.Second).C:
+		t.Error("interval reset timeout")
+	}
+
+	w.setRecommitInterval(50 * time.Millisecond)
 	select {
 	case <-progress:
 	case <-time.NewTimer(time.Second).C:

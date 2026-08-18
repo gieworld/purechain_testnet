@@ -1,0 +1,415 @@
+# PureChain upgrade-rehearsal network.
+#
+# Mirrors an operating PureChain deployment:
+#   - 6 geth nodes: node1-4 validators (no --mine; sealing is driven by the
+#     automine sidecars), node5-6 public RPC ("Idle") nodes with the minimal
+#     eth,net,web3 API, as on a live deployment.
+#   - 4 automine sidecars running the the autoMine-v2.js sealing script via IPC.
+#   - Node profile matches a live deployment: full sync, archive gcmode, snapshot=false,
+#     cache=256, 1g mem limit, SIGINT + 2m grace, restart unless-stopped,
+#     --nodiscover with static addpeers loaded by the entrypoint.
+#
+# Deviations from a live deployment, all deliberate:
+#   - Test keys (hardhat accounts 0-3), never real signer keys.
+#   - No --nat/--ethstats (no public IP, no dashboard; the monitor sidecar
+#     records what ethstats would show).
+#   - genesis gasLimit is 30M = the effective limit in practice (a live genesis
+#     started astronomically high and converged to the 30M miner target long
+#     ago; today's behavior is what we rehearse).
+#   - Per-node image tag (NODEx_TAG) + recommit (NODEx_RECOMMIT) are compose
+#     variables (rehearsal/.env) so the driver can roll nodes between
+#     binaries/configs ONE AT A TIME; a live deployment achieves the same by rebuilding its
+#     single shared image.
+#
+# The driver (drive.sh) owns bring-up ordering — a live deployment brings nodes up
+# sequentially with a consistency gate (see the network bring-up script), so a plain
+# `docker compose up -d` of everything at once is NOT the supported path.
+
+services:
+  node1:
+    image: purechain-rehearsal:${NODE1_TAG:-old}
+    container_name: rehearsal-node1
+    hostname: node1
+    restart: unless-stopped
+    mem_limit: 1g
+    mem_reservation: 512m
+    command:
+      - "--datadir=/data"
+      - "--networkid=424242"
+      - "--rpc.enabledeprecatedpersonal"
+      - "--syncmode=full"
+      - "--allow-insecure-unlock"
+      - "--port=30303"
+      - "--authrpc.port=8551"
+      - "--authrpc.addr=0.0.0.0"
+      - "--http"
+      - "--http.addr=0.0.0.0"
+      - "--http.port=8545"
+      - "--http.api=txpool,miner,admin,eth,web3,debug,personal,net,clique"
+      - "--http.corsdomain=*"
+      - "--http.vhosts=*"
+      - "--nodiscover"
+      - "--snapshot=false"
+      - "--gcmode=archive"
+      - "--miner.gasprice=0"
+      - "--gpo.ignoreprice=0"
+      - "--gpo.maxprice=1000000000"
+      - "--gpo.percentile=0"
+      - "--txpool.pricelimit=0"
+      - "--cache=256"
+      - "--maxpeers=25"
+      - "--unlock=0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+      - "--password=/run/secrets/signer.pw"
+      - "--miner.recommit=${NODE1_RECOMMIT:-2s}"
+      - "--identity=Rehearsal-Validator-1"
+    volumes:
+      - ./data/node1:/data
+      - ./scripts:/scripts:ro
+      - ./secrets/signer.pw:/run/secrets/signer.pw:ro
+    networks: [purechain-rehearsal]
+    stop_grace_period: 2m
+    stop_signal: SIGINT
+    healthcheck:
+      test: "geth attach --exec eth.blockNumber /data/geth.ipc || exit 1"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  node2:
+    image: purechain-rehearsal:${NODE2_TAG:-old}
+    container_name: rehearsal-node2
+    hostname: node2
+    restart: unless-stopped
+    mem_limit: 1g
+    mem_reservation: 512m
+    command:
+      - "--datadir=/data"
+      - "--networkid=424242"
+      - "--rpc.enabledeprecatedpersonal"
+      - "--syncmode=full"
+      - "--allow-insecure-unlock"
+      - "--port=30303"
+      - "--authrpc.port=8551"
+      - "--authrpc.addr=0.0.0.0"
+      - "--http"
+      - "--http.addr=0.0.0.0"
+      - "--http.port=8545"
+      - "--http.api=txpool,miner,admin,eth,web3,debug,personal,net,clique"
+      - "--http.corsdomain=*"
+      - "--http.vhosts=*"
+      - "--nodiscover"
+      - "--snapshot=false"
+      - "--gcmode=archive"
+      - "--miner.gasprice=0"
+      - "--gpo.ignoreprice=0"
+      - "--gpo.maxprice=1000000000"
+      - "--gpo.percentile=0"
+      - "--txpool.pricelimit=0"
+      - "--cache=256"
+      - "--maxpeers=25"
+      - "--unlock=0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
+      - "--password=/run/secrets/signer.pw"
+      - "--miner.recommit=${NODE2_RECOMMIT:-2s}"
+      - "--identity=Rehearsal-Validator-2"
+    volumes:
+      - ./data/node2:/data
+      - ./scripts:/scripts:ro
+      - ./secrets/signer.pw:/run/secrets/signer.pw:ro
+    networks: [purechain-rehearsal]
+    stop_grace_period: 2m
+    stop_signal: SIGINT
+    healthcheck:
+      test: "geth attach --exec eth.blockNumber /data/geth.ipc || exit 1"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  node3:
+    image: purechain-rehearsal:${NODE3_TAG:-old}
+    container_name: rehearsal-node3
+    hostname: node3
+    restart: unless-stopped
+    mem_limit: 1g
+    mem_reservation: 512m
+    command:
+      - "--datadir=/data"
+      - "--networkid=424242"
+      - "--rpc.enabledeprecatedpersonal"
+      - "--syncmode=full"
+      - "--allow-insecure-unlock"
+      - "--port=30303"
+      - "--authrpc.port=8551"
+      - "--authrpc.addr=0.0.0.0"
+      - "--http"
+      - "--http.addr=0.0.0.0"
+      - "--http.port=8545"
+      - "--http.api=txpool,miner,admin,eth,web3,debug,personal,net,clique"
+      - "--http.corsdomain=*"
+      - "--http.vhosts=*"
+      - "--nodiscover"
+      - "--snapshot=false"
+      - "--gcmode=archive"
+      - "--miner.gasprice=0"
+      - "--gpo.ignoreprice=0"
+      - "--gpo.maxprice=1000000000"
+      - "--gpo.percentile=0"
+      - "--txpool.pricelimit=0"
+      - "--cache=256"
+      - "--maxpeers=25"
+      - "--unlock=0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc"
+      - "--password=/run/secrets/signer.pw"
+      - "--miner.recommit=${NODE3_RECOMMIT:-2s}"
+      - "--identity=Rehearsal-Validator-3"
+    volumes:
+      - ./data/node3:/data
+      - ./scripts:/scripts:ro
+      - ./secrets/signer.pw:/run/secrets/signer.pw:ro
+    networks: [purechain-rehearsal]
+    stop_grace_period: 2m
+    stop_signal: SIGINT
+    healthcheck:
+      test: "geth attach --exec eth.blockNumber /data/geth.ipc || exit 1"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  node4:
+    image: purechain-rehearsal:${NODE4_TAG:-old}
+    container_name: rehearsal-node4
+    hostname: node4
+    restart: unless-stopped
+    mem_limit: 1g
+    mem_reservation: 512m
+    command:
+      - "--datadir=/data"
+      - "--networkid=424242"
+      - "--rpc.enabledeprecatedpersonal"
+      - "--syncmode=full"
+      - "--allow-insecure-unlock"
+      - "--port=30303"
+      - "--authrpc.port=8551"
+      - "--authrpc.addr=0.0.0.0"
+      - "--http"
+      - "--http.addr=0.0.0.0"
+      - "--http.port=8545"
+      - "--http.api=txpool,miner,admin,eth,web3,debug,personal,net,clique"
+      - "--http.corsdomain=*"
+      - "--http.vhosts=*"
+      - "--nodiscover"
+      - "--snapshot=false"
+      - "--gcmode=archive"
+      - "--miner.gasprice=0"
+      - "--gpo.ignoreprice=0"
+      - "--gpo.maxprice=1000000000"
+      - "--gpo.percentile=0"
+      - "--txpool.pricelimit=0"
+      - "--cache=256"
+      - "--maxpeers=25"
+      - "--unlock=0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+      - "--password=/run/secrets/signer.pw"
+      - "--miner.recommit=${NODE4_RECOMMIT:-2s}"
+      - "--identity=Rehearsal-Validator-4"
+    volumes:
+      - ./data/node4:/data
+      - ./scripts:/scripts:ro
+      - ./secrets/signer.pw:/run/secrets/signer.pw:ro
+    networks: [purechain-rehearsal]
+    stop_grace_period: 2m
+    stop_signal: SIGINT
+    healthcheck:
+      test: "geth attach --exec eth.blockNumber /data/geth.ipc || exit 1"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  node5:
+    image: purechain-rehearsal:${NODE5_TAG:-old}
+    container_name: rehearsal-node5
+    hostname: node5
+    restart: unless-stopped
+    mem_limit: 1g
+    mem_reservation: 512m
+    command:
+      - "--datadir=/data"
+      - "--networkid=424242"
+      - "--syncmode=full"
+      - "--port=30303"
+      - "--authrpc.port=8551"
+      - "--authrpc.addr=0.0.0.0"
+      - "--http"
+      - "--http.addr=0.0.0.0"
+      - "--http.port=8545"
+      - "--http.api=eth,net,web3"
+      - "--http.corsdomain=*"
+      - "--http.vhosts=*"
+      - "--nodiscover"
+      - "--snapshot=false"
+      - "--gcmode=archive"
+      - "--miner.gasprice=0"
+      - "--gpo.ignoreprice=0"
+      - "--gpo.maxprice=1000000000"
+      - "--gpo.percentile=0"
+      - "--txpool.pricelimit=0"
+      - "--cache=256"
+      - "--maxpeers=25"
+      - "--identity=Rehearsal-Idle-1"
+    volumes:
+      - ./data/node5:/data
+      - ./scripts:/scripts:ro
+    networks: [purechain-rehearsal]
+    stop_grace_period: 2m
+    stop_signal: SIGINT
+    healthcheck:
+      test: "geth attach --exec eth.blockNumber /data/geth.ipc || exit 1"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  node6:
+    image: purechain-rehearsal:${NODE6_TAG:-old}
+    container_name: rehearsal-node6
+    hostname: node6
+    restart: unless-stopped
+    mem_limit: 1g
+    mem_reservation: 512m
+    command:
+      - "--datadir=/data"
+      - "--networkid=424242"
+      - "--syncmode=full"
+      - "--port=30303"
+      - "--authrpc.port=8551"
+      - "--authrpc.addr=0.0.0.0"
+      - "--http"
+      - "--http.addr=0.0.0.0"
+      - "--http.port=8545"
+      - "--http.api=eth,net,web3"
+      - "--http.corsdomain=*"
+      - "--http.vhosts=*"
+      - "--nodiscover"
+      - "--snapshot=false"
+      - "--gcmode=archive"
+      - "--miner.gasprice=0"
+      - "--gpo.ignoreprice=0"
+      - "--gpo.maxprice=1000000000"
+      - "--gpo.percentile=0"
+      - "--txpool.pricelimit=0"
+      - "--cache=256"
+      - "--maxpeers=25"
+      - "--identity=Rehearsal-Idle-2"
+    volumes:
+      - ./data/node6:/data
+      - ./scripts:/scripts:ro
+    networks: [purechain-rehearsal]
+    stop_grace_period: 2m
+    stop_signal: SIGINT
+    healthcheck:
+      test: "geth attach --exec eth.blockNumber /data/geth.ipc || exit 1"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ---- automine sidecars (the sealing mechanism: attach via the shared
+  # datadir IPC, preload autoMine-v2.js, restart the attach loop forever) ----
+  automine-node1:
+    image: purechain-rehearsal:${NODE1_TAG:-old}
+    container_name: rehearsal-automine-node1
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 30
+        while true; do
+          echo "Attaching to geth..."
+          geth attach --preload /scripts/autoMine-v2.js /data/geth.ipc
+          sleep 5
+        done
+    volumes:
+      - ./data/node1:/data
+      - ./scripts:/scripts:ro
+    networks: [purechain-rehearsal]
+    depends_on: [node1]
+
+  automine-node2:
+    image: purechain-rehearsal:${NODE2_TAG:-old}
+    container_name: rehearsal-automine-node2
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 30
+        while true; do
+          echo "Attaching to geth..."
+          geth attach --preload /scripts/autoMine-v2.js /data/geth.ipc
+          sleep 5
+        done
+    volumes:
+      - ./data/node2:/data
+      - ./scripts:/scripts:ro
+    networks: [purechain-rehearsal]
+    depends_on: [node2]
+
+  automine-node3:
+    image: purechain-rehearsal:${NODE3_TAG:-old}
+    container_name: rehearsal-automine-node3
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 30
+        while true; do
+          echo "Attaching to geth..."
+          geth attach --preload /scripts/autoMine-v2.js /data/geth.ipc
+          sleep 5
+        done
+    volumes:
+      - ./data/node3:/data
+      - ./scripts:/scripts:ro
+    networks: [purechain-rehearsal]
+    depends_on: [node3]
+
+  automine-node4:
+    image: purechain-rehearsal:${NODE4_TAG:-old}
+    container_name: rehearsal-automine-node4
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 30
+        while true; do
+          echo "Attaching to geth..."
+          geth attach --preload /scripts/autoMine-v2.js /data/geth.ipc
+          sleep 5
+        done
+    volumes:
+      - ./data/node4:/data
+      - ./scripts:/scripts:ro
+    networks: [purechain-rehearsal]
+    depends_on: [node4]
+
+  # ---- referee: polls every node, records agreement/heads/mining, trips on
+  # divergence. Started explicitly by the driver after bring-up. ----
+  monitor:
+    profiles: [tools]
+    build: ./monitor
+    image: purechain-rehearsal-monitor
+    container_name: rehearsal-monitor
+    restart: unless-stopped
+    volumes:
+      - ./artifacts:/artifacts
+    networks: [purechain-rehearsal]
+
+  # ---- load generator / functional test client. Never started by `up`;
+  # the driver invokes one-shot commands via `docker compose run --rm loadgen ...` ----
+  loadgen:
+    profiles: [tools]
+    build: ./loadgen
+    image: purechain-rehearsal-loadgen
+    volumes:
+      - ./artifacts:/artifacts
+      - ./scripts:/scripts
+      - ./data:/hostdata
+    networks: [purechain-rehearsal]
+
+networks:
+  purechain-rehearsal:
+    driver: bridge

@@ -6,11 +6,18 @@
 # Intended to run inside the Linux test container (see smoke-test/Dockerfile),
 # but works anywhere bash + curl (+ node for the ethers test) are available.
 #
-# Usage: run-all.sh <geth-original> <geth-patched>
+# An optional third argument, a PREVIOUS build of this fork, additionally runs the
+# release-upgrade scenarios (previous fork build -> this build). Those answer a
+# different question from the stock->patched ones: not "can a Clique chain adopt
+# Cancun" but "can operators move between two releases of this fork without
+# losing block continuity". Omit it and those two scenarios are skipped.
+#
+# Usage: run-all.sh <geth-original> <geth-patched> [geth-previous]
 set -u
 
-ORIG="${1:?usage: run-all.sh <geth-original> <geth-patched>}"
-PATCHED="${2:?usage: run-all.sh <geth-original> <geth-patched>}"
+ORIG="${1:?usage: run-all.sh <geth-original> <geth-patched> [geth-previous]}"
+PATCHED="${2:?usage: run-all.sh <geth-original> <geth-patched> [geth-previous]}"
+PREV="${3:-}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
 RESULTS=()
@@ -57,11 +64,25 @@ run "ethers-compat"    bash "$DIR/ethers-compat.sh"  "$PATCHED"
 run "transition"       bash "$DIR/transition.sh"     "$PATCHED"
 run "multisig-transition" bash "$DIR/multisig-transition.sh" "$PATCHED"
 run "snap-sync"        bash "$DIR/snap-sync.sh"      "$PATCHED"
+run "out-of-turn"      bash "$DIR/out-of-turn.sh"    "$PATCHED" 250ms
+run "commit-latency"   bash "$DIR/commit-latency.sh" "$PATCHED" 20 2s 500ms 250ms
 
 # ---- A/B upgrade scenarios (stock -> patched) ----
 run "transition-prod"  bash "$DIR/transition-prod.sh"  "$ORIG" "$PATCHED"
 run "rollback"         bash "$DIR/rollback.sh"         "$ORIG" "$PATCHED"
 run "upgrade-rigorous" bash "$DIR/upgrade-rigorous.sh" "$ORIG" "$PATCHED"
+
+# ---- release-upgrade scenarios (previous fork build -> this build) ----
+if [ -n "$PREV" ]; then
+  run "inplace-upgrade" bash "$DIR/inplace-upgrade.sh" "$PREV" "$PATCHED"
+  run "mixed-version"   bash "$DIR/mixed-version.sh"   "$PREV" "$PATCHED"
+  run "rolling-upgrade" bash "$DIR/rolling-upgrade.sh" "$PREV" "$PATCHED" 4
+else
+  echo
+  echo "##### skipping inplace-upgrade + mixed-version + rolling-upgrade (no previous build) #####"
+  echo "      pass a previous build as \$3 to run them:"
+  echo "      run-all.sh <geth-original> <geth-patched> <geth-previous>"
+fi
 
 echo; echo "########################## SUMMARY ##########################"
 printf '%s\n' "${RESULTS[@]}"

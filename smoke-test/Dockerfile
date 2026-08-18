@@ -3,9 +3,10 @@
 # Bakes in BOTH the stock v1.13.15 geth and the patched geth (built for
 # linux/amd64) plus the whole smoke-test suite, then runs run-all.sh.
 #
-# Build the two static binaries first (from the repo root):
+# Build the three static binaries first (from the repo root):
 #   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/bin/geth-linux-amd64 ./cmd/geth
 #   # stock v1.13.15 from the base commit c5ba367eb -> build/bin/geth-original-linux-amd64
+#   # previous release of this fork               -> build/bin/geth-previous-linux-amd64
 #
 # Then, from the repo root:
 #   docker build -f smoke-test/Dockerfile -t clique-cancun-smoke .
@@ -19,15 +20,19 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Binaries (built for linux/amd64, statically linked with CGO_ENABLED=0).
+# geth-previous is the PREVIOUS RELEASE of this fork (alias kept in build/bin
+# like the other two); it enables the release-upgrade scenarios
+# (inplace-upgrade, mixed-version, rolling-upgrade) in run-all.sh.
 COPY build/bin/geth-original-linux-amd64 /usr/local/bin/geth-original
 COPY build/bin/geth-linux-amd64          /usr/local/bin/geth-patched
+COPY build/bin/geth-previous-linux-amd64 /usr/local/bin/geth-previous
 
 # Test suite.
 COPY smoke-test/ /smoke-test/
 
 # Normalise line endings (defensive if checked out with CRLF) and make executable.
 RUN sed -i 's/\r$//' /smoke-test/*.sh \
- && chmod +x /usr/local/bin/geth-original /usr/local/bin/geth-patched /smoke-test/*.sh
+ && chmod +x /usr/local/bin/geth-original /usr/local/bin/geth-patched /usr/local/bin/geth-previous /smoke-test/*.sh
 
 WORKDIR /smoke-test
-ENTRYPOINT ["bash", "/smoke-test/run-all.sh", "/usr/local/bin/geth-original", "/usr/local/bin/geth-patched"]
+ENTRYPOINT ["bash", "/smoke-test/run-all.sh", "/usr/local/bin/geth-original", "/usr/local/bin/geth-patched", "/usr/local/bin/geth-previous"]

@@ -1,0 +1,10 @@
+# Adds the generated genesis.json into every node container so the driver can
+# run `docker compose run --rm --entrypoint "" nodeN geth init /genesis.json`
+# without host-path mount headaches on Windows.
+services:
+  node1: { volumes: ["./genesis.json:/genesis.json:ro"] }
+  node2: { volumes: ["./genesis.json:/genesis.json:ro"] }
+  node3: { volumes: ["./genesis.json:/genesis.json:ro"] }
+  node4: { volumes: ["./genesis.json:/genesis.json:ro"] }
+  node5: { volumes: ["./genesis.json:/genesis.json:ro"] }
+  node6: { volumes: ["./genesis.json:/genesis.json:ro"] }

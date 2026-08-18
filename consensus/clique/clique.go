@@ -177,6 +177,7 @@ type Clique struct {
 
 	recents    *lru.Cache[common.Hash, *Snapshot] // Snapshots for recent block to speed up reorgs
 	signatures *sigLRU                            // Signatures of recent blocks to speed up mining
+	wiggles    *wiggleCache                       // Out-of-turn sealing delays, stable per block
 
 	proposals map[common.Address]bool // Current list of proposals we are pushing
 
@@ -205,6 +206,7 @@ func New(config *params.CliqueConfig, db ethdb.Database) *Clique {
 		db:         db,
 		recents:    recents,
 		signatures: signatures,
+		wiggles:    newWiggleCache(),
 		proposals:  make(map[common.Address]bool),
 	}
 }
@@ -332,11 +334,11 @@ func (c *Clique) verifyHeader(chain consensus.ChainHeaderReader, header *types.H
 	} else {
 		switch {
 		case header.ExcessBlobGas != nil:
-			return fmt.Errorf("invalid excessBlobGas: have %d, expected nil", header.ExcessBlobGas)
+			return fmt.Errorf("invalid excessBlobGas: have %d, expected nil", *header.ExcessBlobGas)
 		case header.BlobGasUsed != nil:
-			return fmt.Errorf("invalid blobGasUsed: have %d, expected nil", header.BlobGasUsed)
+			return fmt.Errorf("invalid blobGasUsed: have %d, expected nil", *header.BlobGasUsed)
 		case header.ParentBeaconRoot != nil:
-			return fmt.Errorf("invalid parentBeaconRoot, have %#x, expected nil", header.ParentBeaconRoot)
+			return fmt.Errorf("invalid parentBeaconRoot, have %#x, expected nil", *header.ParentBeaconRoot)
 		}
 	}
 	// All basic checks passed, verify cascading fields
@@ -681,11 +683,21 @@ func (c *Clique) Seal(chain consensus.ChainHeaderReader, block *types.Block, res
 	// Sweet, the protocol permits us to sign the block, wait for our time
 	delay := time.Unix(int64(header.Time), 0).Sub(time.Now()) // nolint: gosimple
 	if header.Difficulty.Cmp(diffNoTurn) == 0 {
-		// It's not our turn explicitly to sign, delay it a bit
-		wiggle := time.Duration(len(snap.Signers)/2+1) * wiggleTime
-		delay += time.Duration(rand.Int63n(int64(wiggle)))
+		// It's not our turn explicitly to sign, delay it a bit. The draw is keyed
+		// to the block, not to this call, and its deadline is anchored in absolute
+		// time, so a re-seal triggered by a mid-period rebuild resumes the same
+		// countdown instead of re-rolling it or — because Prepare bumps
+		// header.Time to "now" on late blocks — restarting it from scratch.
+		// See wiggle.go.
+		span := time.Duration(len(snap.Signers)/2+1) * wiggleTime
+		deadline, drawn := c.wiggle(header.ParentHash, number, time.Unix(int64(header.Time), 0), span)
+		delay = time.Until(deadline)
 
-		log.Trace("Out-of-turn signing requested", "wiggle", common.PrettyDuration(wiggle))
+		// Logged at Debug (not Trace) so the drawn value is observable on a live
+		// chain: re-sealing the same block must report the same "drawn". That is
+		// what smoke-test/out-of-turn.sh asserts.
+		log.Debug("Out-of-turn signing requested", "number", number, "parent", header.ParentHash,
+			"span", common.PrettyDuration(span), "drawn", drawn.Milliseconds())
 	}
 	// Sign all the things!
 	sighash, err := signFn(accounts.Account{Address: signer}, accounts.MimetypeClique, CliqueRLP(header))

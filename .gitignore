@@ -50,3 +50,12 @@ profile.cov
 logs/
 
 tests/spec-tests/
+
+# rehearsal harness: generated/state/secrets stay local
+/rehearsal/artifacts/
+/rehearsal/data/
+/rehearsal/bin/
+/rehearsal/secrets/
+/rehearsal/.env
+/rehearsal/genesis.json
+/rehearsal/scripts/addpeers.js

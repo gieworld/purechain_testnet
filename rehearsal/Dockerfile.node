@@ -1,0 +1,25 @@
+# Rehearsal node image — the same recipe used to build deployed nodes
+# (FROM ethereum/client-go + bash + binary override + scripts + entrypoint),
+# parameterized so the driver can build one image per binary under test:
+#
+#   docker build -f Dockerfile.node --build-arg GETH_BIN=geth-old-linux-amd64 -t purechain-rehearsal:old ..context..
+#   docker build -f Dockerfile.node --build-arg GETH_BIN=geth-new-linux-amd64 -t purechain-rehearsal:new ..context..
+#
+# The build context is rehearsal/ and the driver copies the binaries in as
+# rehearsal/bin/<name> before building (build/bin is outside the context).
+FROM ethereum/client-go:v1.13.14
+
+ARG GETH_BIN
+COPY bin/${GETH_BIN} /usr/local/bin/geth
+
+RUN apk add --no-cache bash curl
+
+RUN mkdir -p /scripts /data
+COPY scripts/entrypoint.sh /entrypoint.sh
+# Normalize line endings defensively (repo may be checked out CRLF on Windows)
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh /usr/local/bin/geth
+
+WORKDIR /data
+EXPOSE 30303 30303/udp 8545 8551
+
+ENTRYPOINT ["/entrypoint.sh"]

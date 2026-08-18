@@ -115,6 +115,7 @@ echo "deployed storage contract: $CONTRACT"
 # Record the pre-upgrade state snapshot.
 HEAD_A=$(head_num $P1)
 HHASH_A=$(blk_hash $P1 "latest")
+GEN_A=$(blk_hash $P1 "0x0")
 B2_A=$(blk_hash $P1 "0x2")
 BAL_SIGNER_A=$(res "$(rpc $P1 "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getBalance\",\"params\":[\"$SIGNER\",\"latest\"],\"id\":1}")")
 BAL_ACC2_A=$(res "$(rpc $P1 "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getBalance\",\"params\":[\"$ACC2\",\"latest\"],\"id\":1}")")
@@ -201,7 +202,7 @@ HEAD_C=$(head_num $P1)
 echo "patched head now: $HEAD_C (London@$FB, forks@$FT)"
 
 # --- immutability: pre-fork blocks unchanged ---
-eq "genesis hash still == G0"               "$(blk_hash $P1 '0x0')" "$(blk_hash $P1 '0x0')"  # tautology guard; real check below
+eq "genesis hash UNCHANGED on the live node"  "$(blk_hash $P1 '0x0')" "$GEN_A"
 B2_C=$(blk_hash $P1 "0x2")
 eq "pre-fork block #2 hash UNCHANGED"       "$B2_C" "$B2_A"
 

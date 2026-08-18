@@ -55,8 +55,18 @@ const (
 	resubmitAdjustChanSize = 10
 
 	// minRecommitInterval is the minimal time interval to recreate the sealing block with
-	// any newly arrived transactions.
-	minRecommitInterval = 1 * time.Second
+	// any newly arrived transactions. Upstream (as of v1.17.5) has no floor at all: its
+	// miner became a beacon-driven payload builder that rebuilds until the getPayload
+	// deadline. On a self-scheduling Clique sealer the same effect needs --miner.recommit
+	// below clique.period, so the floor must sit under the smallest useful period (1s).
+	// It stays non-zero because newWorkLoop's timer rearms unconditionally: a zero
+	// interval would busy-spin on an idle chain instead of idling until the next block.
+	//
+	// Caution for multi-signer chains: a resubmit that changes the seal hash makes
+	// taskLoop restart engine.Seal, and clique.Seal draws a FRESH out-of-turn wiggle
+	// each call. Repeated re-draws bias an out-of-turn signer toward publishing early,
+	// eroding the in-turn signer's head start. See docs/upstream-backports.md.
+	minRecommitInterval = 100 * time.Millisecond
 
 	// maxRecommitInterval is the maximum time interval to recreate the sealing block with
 	// any newly arrived transactions.

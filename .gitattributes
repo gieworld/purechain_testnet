@@ -1,3 +1,7 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 *.sol linguist-language=Solidity
+# Shell scripts must check out with LF even under core.autocrlf=true on
+# Windows: the smoke-test suite runs them in WSL/Linux containers, where a
+# CRLF shebang line makes bash abort on the spot ("set: - invalid option").
+*.sh text eol=lf

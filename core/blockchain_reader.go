@@ -266,35 +266,44 @@ func (bc *BlockChain) GetAncestor(hash common.Hash, number, ancestor uint64, max
 // transaction indexing is already finished. The transaction is not existent
 // from the node's perspective.
 func (bc *BlockChain) GetTransactionLookup(hash common.Hash) (*rawdb.LegacyTxLookupEntry, *types.Transaction, error) {
-	// Short circuit if the txlookup already in the cache, retrieve otherwise
+	// The lookup read and its caching must not overlap a reorg, or a stale
+	// pre-reorg entry can be cached while the canonical markers are being
+	// rewritten. Scoped to the cache and canonical read only: the indexing
+	// -progress path below blocks on the indexer goroutine, and holding the
+	// lock across that would let a slow indexer stall the reorg writer.
+	bc.txLookupLock.RLock()
 	if item, exist := bc.txLookupCache.Get(hash); exist {
+		bc.txLookupLock.RUnlock()
 		return item.lookup, item.transaction, nil
 	}
 	tx, blockHash, blockNumber, txIndex := rawdb.ReadTransaction(bc.db, hash)
-	if tx == nil {
-		progress, err := bc.TxIndexProgress()
-		if err != nil {
-			return nil, nil, nil
+	if tx != nil {
+		lookup := &rawdb.LegacyTxLookupEntry{
+			BlockHash:  blockHash,
+			BlockIndex: blockNumber,
+			Index:      txIndex,
 		}
-		// The transaction indexing is not finished yet, returning an
-		// error to explicitly indicate it.
-		if !progress.Done() {
-			return nil, nil, errors.New("transaction indexing still in progress")
-		}
-		// The transaction is already indexed, the transaction is either
-		// not existent or not in the range of index, returning null.
+		bc.txLookupCache.Add(hash, txLookup{
+			lookup:      lookup,
+			transaction: tx,
+		})
+		bc.txLookupLock.RUnlock()
+		return lookup, tx, nil
+	}
+	bc.txLookupLock.RUnlock()
+
+	progress, err := bc.TxIndexProgress()
+	if err != nil {
 		return nil, nil, nil
 	}
-	lookup := &rawdb.LegacyTxLookupEntry{
-		BlockHash:  blockHash,
-		BlockIndex: blockNumber,
-		Index:      txIndex,
+	// The transaction indexing is not finished yet, returning an
+	// error to explicitly indicate it.
+	if !progress.Done() {
+		return nil, nil, errors.New("transaction indexing still in progress")
 	}
-	bc.txLookupCache.Add(hash, txLookup{
-		lookup:      lookup,
-		transaction: tx,
-	})
-	return lookup, tx, nil
+	// The transaction is already indexed, the transaction is either
+	// not existent or not in the range of index, returning null.
+	return nil, nil, nil
 }
 
 // GetTd retrieves a block's total difficulty in the canonical chain from the

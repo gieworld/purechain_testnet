@@ -1,16 +1,23 @@
-# PureChain Testnet — geth client (`go-ethereum v1.13.15` fork)
+# PureChain Testnet — execution client
 
-The execution client for the **PureChain testnet**: a patched **go-ethereum
-v1.13.15** that runs a **Clique (Proof-of-Authority)** network on the
-**Shanghai** and **Cancun** hard forks **without a beacon chain / without the
-Merge**, in **free-gas** mode (zero base fee).
+The execution client for the **PureChain testnet**: a permissioned,
+**free-gas** EVM network. Transactions cost zero — there is no base fee and no
+tip — and blocks are produced by a known set of validators rather than by
+open mining or staking.
 
-Upstream geth requires the PoS Merge for any post-Shanghai fork, and **removed
-Clique entirely in v1.14** — so no stock geth release can validate a chain like
-this (it panics on the first post-activation block). This fork keeps Clique alive
-and teaches it the post-Merge header fields, so PureChain can run modern EVM
-features (PUSH0, transient storage, blob-carrying txs, EIP-4788, …) on a
-permissioned validator set.
+It is a fork of **go-ethereum v1.13.15**, kept close to upstream so the client
+behaves like the geth operators already know: same CLI, same JSON-RPC, same
+tooling (MetaMask, ethers, Hardhat, block explorers). The fork exists because
+PureChain needs a combination stock geth no longer supports — a
+**Proof-of-Authority (Clique)** validator set running the **current EVM**
+(Shanghai and Cancun: PUSH0, transient storage, EIP-4788, blob-carrying
+transaction plumbing) with zero-cost transactions. Upstream ties post-Shanghai
+forks to the PoS Merge and dropped Clique in v1.14, so this fork maintains that
+path.
+
+Everything is gated so non-PureChain behaviour is untouched: the patches apply
+only when a chain is configured as Clique and/or free-gas, and the client still
+runs an ordinary Ethereum chain unchanged.
 
 > **Network parameters** (chainId, validators, activation times) are provisioned
 > per deployment and are **not** hard-coded here — the examples in this repo use a
@@ -44,8 +51,10 @@ than config. See **[`CHANGELOG.md`](CHANGELOG.md)** for the full, per-file ledge
 | [`docs/operator-guide.md`](docs/operator-guide.md) | Build, genesis, running signer nodes |
 | [`docs/upgrade-runbook.md`](docs/upgrade-runbook.md) | In-place Istanbul → Cancun upgrade of a live chain |
 | [`docs/cancun-gas-free-report.md`](docs/cancun-gas-free-report.md) | Why the network stays gas-free and safe |
+| [`docs/upstream-backports.md`](docs/upstream-backports.md) | Upstream fixes adopted from v1.13.15 → v1.17.5, and what was rejected |
 | [`network/`](network/) | Example genesis + `gen-genesis.sh` generator (generic chainId `424242`) |
 | [`smoke-test/`](smoke-test/) | Dockerized regression/compat suite (`run-all.sh`) |
+| [`rehearsal/`](rehearsal/) | Dress-rehearsal harness: upgrade, stress, outage and rollback drills on a throwaway 6-node network |
 
 Report security issues privately — see [`SECURITY.md`](SECURITY.md).
 

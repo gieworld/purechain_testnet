@@ -454,6 +454,11 @@ func (h *virtualHostHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Either invalid (too many colons) or no port specified
 		host = r.Host
 	}
+	// Hostnames are case-insensitive, and newVHostHandler already lower-cases the
+	// allowlist, so fold the request host too. Without this, "Host: LOCALHOST" is
+	// rejected even when "localhost" is allowlisted. This only ever turns a false
+	// 403 into a 200; it cannot loosen the allowlist beyond its entries.
+	host = strings.ToLower(host)
 	if ipAddr := net.ParseIP(host); ipAddr != nil {
 		// It's an IP address, we can serve that
 		h.next.ServeHTTP(w, r)

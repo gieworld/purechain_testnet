@@ -223,7 +223,10 @@ func (p *TxPool) loop(head *types.Header, chain BlockChain) {
 					for _, subpool := range p.subpools {
 						subpool.Reset(oldHead, newHead)
 					}
-					resetDone <- newHead
+					select {
+					case resetDone <- newHead:
+					case <-p.term:
+					}
 				}(oldHead, newHead)
 
 				// If the reset operation was explicitly requested, consider it
@@ -341,7 +344,7 @@ func (p *TxPool) Add(txs []*types.Transaction, local bool, sync bool) []error {
 	for i, split := range splits {
 		// If the transaction was rejected by all subpools, mark it unsupported
 		if split == -1 {
-			errs[i] = core.ErrTxTypeNotSupported
+			errs[i] = fmt.Errorf("%w: received type %d", core.ErrTxTypeNotSupported, txs[i].Type())
 			continue
 		}
 		// Find which subpool handled it and pull in the corresponding error

@@ -425,8 +425,8 @@ func (f *TxFetcher) loop() {
 			if want > maxTxAnnounces {
 				txAnnounceDOSMeter.Mark(int64(want - maxTxAnnounces))
 
-				ann.hashes = ann.hashes[:want-maxTxAnnounces]
-				ann.metas = ann.metas[:want-maxTxAnnounces]
+				ann.hashes = ann.hashes[:maxTxAnnounces-used]
+				ann.metas = ann.metas[:maxTxAnnounces-used]
 			}
 			// All is well, schedule the remainder of the transactions
 			idleWait := len(f.waittime) == 0
@@ -752,6 +752,10 @@ func (f *TxFetcher) loop() {
 					delete(f.announced[hash], drop.peer)
 					if len(f.announced[hash]) == 0 {
 						delete(f.announced, hash)
+					}
+					delete(f.alternates[hash], drop.peer)
+					if len(f.alternates[hash]) == 0 {
+						delete(f.alternates, hash)
 					}
 				}
 				delete(f.announces, drop.peer)
