@@ -1,5 +1,9 @@
 # PureChain Testnet — execution client
 
+**[📖 Documentation](https://gieworld.github.io/purechain-docs/)** ·
+**[⬇️ Download a release](https://github.com/gieworld/purechain_testnet/releases/latest)** ·
+**[🚀 Run your own network](https://gieworld.github.io/purechain-docs/02-run-your-own/)**
+
 The execution client for the **PureChain testnet**: a permissioned,
 **free-gas** EVM network. Transactions cost zero — there is no base fee and no
 tip — and blocks are produced by a known set of validators rather than by
@@ -44,6 +48,12 @@ than config. See **[`CHANGELOG.md`](CHANGELOG.md)** for the full, per-file ledge
 | Non-merge fixes | `eth/fetcher/block_fetcher.go`, `internal/era`, `core/txpool/blobpool` | Preserve block withdrawals on gossip/history paths upstream assumes die at the Merge |
 
 ### Documentation
+
+Start at **[gieworld.github.io/purechain-docs](https://gieworld.github.io/purechain-docs/)** —
+the full documentation site: what PureChain is, how to run your own network,
+operating and troubleshooting a live one, and how to join the public network.
+
+The documents below live in this repository and go deeper on the client itself:
 
 | Doc | What it covers |
 |-----|----------------|
