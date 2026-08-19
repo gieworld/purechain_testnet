@@ -3,26 +3,26 @@
 # Mirrors an operating PureChain deployment:
 #   - 6 geth nodes: node1-4 validators (no --mine; sealing is driven by the
 #     automine sidecars), node5-6 public RPC ("Idle") nodes with the minimal
-#     eth,net,web3 API, as on a live deployment.
-#   - 4 automine sidecars running the the autoMine-v2.js sealing script via IPC.
-#   - Node profile matches a live deployment: full sync, archive gcmode, snapshot=false,
+#     eth,net,web3 API, exactly as prod.
+#   - 4 automine sidecars running the verbatim prod autoMine-v2.js via IPC.
+#   - Same node profile as prod: full sync, archive gcmode, snapshot=false,
 #     cache=256, 1g mem limit, SIGINT + 2m grace, restart unless-stopped,
 #     --nodiscover with static addpeers loaded by the entrypoint.
 #
-# Deviations from a live deployment, all deliberate:
-#   - Test keys (hardhat accounts 0-3), never real signer keys.
+# Deviations from prod, all deliberate:
+#   - Test keys (hardhat accounts 0-3), never the prod signer keys.
 #   - No --nat/--ethstats (no public IP, no dashboard; the monitor sidecar
 #     records what ethstats would show).
-#   - genesis gasLimit is 30M = the effective limit in practice (a live genesis
+#   - genesis gasLimit is 30M = prod's CURRENT effective limit (prod's genesis
 #     started astronomically high and converged to the 30M miner target long
 #     ago; today's behavior is what we rehearse).
 #   - Per-node image tag (NODEx_TAG) + recommit (NODEx_RECOMMIT) are compose
 #     variables (rehearsal/.env) so the driver can roll nodes between
-#     binaries/configs ONE AT A TIME; a live deployment achieves the same by rebuilding its
+#     binaries/configs ONE AT A TIME; prod achieves the same by rebuilding its
 #     single shared image.
 #
-# The driver (drive.sh) owns bring-up ordering — a live deployment brings nodes up
-# sequentially with a consistency gate (see the network bring-up script), so a plain
+# The driver (drive.sh) owns bring-up ordering — prod brings nodes up
+# sequentially with a consistency gate (see prod start_network.sh), so a plain
 # `docker compose up -d` of everything at once is NOT the supported path.
 
 services:
@@ -253,9 +253,17 @@ services:
       - "--cache=256"
       - "--maxpeers=25"
       - "--identity=Rehearsal-Idle-1"
+      # STANDBY VALIDATOR (PoA² phase). The key is unlocked but this node is
+      # NOT in the genesis signer set, so it seals nothing until PoA² votes it
+      # in. That is the whole point of a standby: already synced, already
+      # unlocked, promotable without an operator touching it.
+      - "--unlock=0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc"
+      - "--password=/run/secrets/signer.pw"
+      - "--allow-insecure-unlock"
     volumes:
       - ./data/node5:/data
       - ./scripts:/scripts:ro
+      - ./secrets/signer.pw:/run/secrets/signer.pw:ro
     networks: [purechain-rehearsal]
     stop_grace_period: 2m
     stop_signal: SIGINT
@@ -296,9 +304,14 @@ services:
       - "--cache=256"
       - "--maxpeers=25"
       - "--identity=Rehearsal-Idle-2"
+      # STANDBY VALIDATOR (PoA² phase) — see node5.
+      - "--unlock=0x976ea74026e726554db657fa54763abd0c3a0aa9"
+      - "--password=/run/secrets/signer.pw"
+      - "--allow-insecure-unlock"
     volumes:
       - ./data/node6:/data
       - ./scripts:/scripts:ro
+      - ./secrets/signer.pw:/run/secrets/signer.pw:ro
     networks: [purechain-rehearsal]
     stop_grace_period: 2m
     stop_signal: SIGINT
@@ -308,7 +321,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # ---- automine sidecars (the sealing mechanism: attach via the shared
+  # ---- automine sidecars (verbatim prod mechanism: attach via the shared
   # datadir IPC, preload autoMine-v2.js, restart the attach loop forever) ----
   automine-node1:
     image: purechain-rehearsal:${NODE1_TAG:-old}
@@ -385,6 +398,147 @@ services:
       - ./scripts:/scripts:ro
     networks: [purechain-rehearsal]
     depends_on: [node4]
+
+  # ---- PoA² sidecars (profile: poa2) --------------------------------------
+  # One per VALIDATOR: clique.propose() is a local vote, so a proposal only
+  # carries when a majority of signers independently reach the same verdict —
+  # every validator has to be running the controller, with an identical pool.
+  #
+  # Plus sealing sidecars for the two STANDBYS, so a promoted standby starts
+  # sealing on its own. Without them a vote would install a signer that never
+  # seals: it still counts toward len(signers) and raises the recent-signer
+  # bar, which is how automation can halt a chain it was meant to heal.
+  poa2-node1:
+    profiles: [poa2]
+    image: purechain-rehearsal:${NODE1_TAG:-old}
+    container_name: rehearsal-poa2-node1
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 5
+        while true; do
+          geth attach --preload /scripts/poa2.js /data/geth.ipc
+          sleep 5
+        done
+    volumes: ["./data/node1:/data", "./scripts:/scripts:ro"]
+    networks: [purechain-rehearsal]
+
+  poa2-node2:
+    profiles: [poa2]
+    image: purechain-rehearsal:${NODE2_TAG:-old}
+    container_name: rehearsal-poa2-node2
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 5
+        while true; do
+          geth attach --preload /scripts/poa2.js /data/geth.ipc
+          sleep 5
+        done
+    volumes: ["./data/node2:/data", "./scripts:/scripts:ro"]
+    networks: [purechain-rehearsal]
+
+  poa2-node3:
+    profiles: [poa2]
+    image: purechain-rehearsal:${NODE3_TAG:-old}
+    container_name: rehearsal-poa2-node3
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 5
+        while true; do
+          geth attach --preload /scripts/poa2.js /data/geth.ipc
+          sleep 5
+        done
+    volumes: ["./data/node3:/data", "./scripts:/scripts:ro"]
+    networks: [purechain-rehearsal]
+
+  poa2-node4:
+    profiles: [poa2]
+    image: purechain-rehearsal:${NODE4_TAG:-old}
+    container_name: rehearsal-poa2-node4
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 5
+        while true; do
+          geth attach --preload /scripts/poa2.js /data/geth.ipc
+          sleep 5
+        done
+    volumes: ["./data/node4:/data", "./scripts:/scripts:ro"]
+    networks: [purechain-rehearsal]
+
+  # Controllers on the STANDBYS too. A promoted standby that isn't running one
+  # cannot vote, so the voting quorum erodes with every replacement — observed
+  # in the rehearsal: after one heal only 2 of 4 signers could vote and the
+  # next proposal could never carry.
+  poa2-node5:
+    profiles: [poa2]
+    image: purechain-rehearsal:${NODE5_TAG:-old}
+    container_name: rehearsal-poa2-node5
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 5
+        while true; do
+          geth attach --preload /scripts/poa2.js /data/geth.ipc
+          sleep 5
+        done
+    volumes: ["./data/node5:/data", "./scripts:/scripts:ro"]
+    networks: [purechain-rehearsal]
+
+  poa2-node6:
+    profiles: [poa2]
+    image: purechain-rehearsal:${NODE6_TAG:-old}
+    container_name: rehearsal-poa2-node6
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 5
+        while true; do
+          geth attach --preload /scripts/poa2.js /data/geth.ipc
+          sleep 5
+        done
+    volumes: ["./data/node6:/data", "./scripts:/scripts:ro"]
+    networks: [purechain-rehearsal]
+
+  automine-node5:
+    profiles: [poa2]
+    image: purechain-rehearsal:${NODE5_TAG:-old}
+    container_name: rehearsal-automine-node5
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 5
+        while true; do
+          geth attach --preload /scripts/autoMine-v2.js /data/geth.ipc
+          sleep 5
+        done
+    volumes: ["./data/node5:/data", "./scripts:/scripts:ro"]
+    networks: [purechain-rehearsal]
+
+  automine-node6:
+    profiles: [poa2]
+    image: purechain-rehearsal:${NODE6_TAG:-old}
+    container_name: rehearsal-automine-node6
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 5
+        while true; do
+          geth attach --preload /scripts/autoMine-v2.js /data/geth.ipc
+          sleep 5
+        done
+    volumes: ["./data/node6:/data", "./scripts:/scripts:ro"]
+    networks: [purechain-rehearsal]
 
   # ---- referee: polls every node, records agreement/heads/mining, trips on
   # divergence. Started explicitly by the driver after bring-up. ----

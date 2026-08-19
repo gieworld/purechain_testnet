@@ -1,4 +1,4 @@
-# Rehearsal node image — the same recipe used to build deployed nodes
+# Rehearsal node image — the same recipe as prod's Dockerfile
 # (FROM ethereum/client-go + bash + binary override + scripts + entrypoint),
 # parameterized so the driver can build one image per binary under test:
 #

@@ -1,11 +1,11 @@
 // PureChain — Smart Auto-Mining v2
-// The sealing policy used by PureChain validators. The rehearsal runs it
+// The sealing policy PureChain validators run. The rehearsal uses it
 // unmodified, so a binary upgrade is tested against the real "on-demand
 // mining" mechanism rather than a simplified stand-in.
 // ---------------------------------------------------------------------------
 // Preserves the on-demand ("smart auto mining") novelty — validators do NOT
 // seal empty blocks when the whole network is idle — while eliminating the
-// Clique liveness stall described below.
+// Clique liveness stall (see docs/upgrade/clique-liveness-stall-bug-report.md).
 //
 // Why v1 stalled: it started/stopped the miner from THIS node's LOCAL
 // txpool.status.pending only. Under load, txs propagate with nonce gaps, so a

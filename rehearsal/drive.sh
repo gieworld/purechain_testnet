@@ -2,8 +2,8 @@
 # PureChain upgrade-rehearsal campaign driver.
 #
 # Runs the complete campaign phase by phase against the docker-compose network
-# in this directory, mirroring the operational procedures of
-# an operating deployment (sequential fork-safe bring-up, automine
+# in this directory, mirroring the production operational procedures read from
+# the live AWS stack on 2026-08-12 (sequential fork-safe bring-up, automine
 # sidecars, relay arming after restarts).
 #
 #   ./drive.sh prep       build images, genesis, keys        (~5 min, no chain)
@@ -25,13 +25,8 @@ set -u
 export MSYS_NO_PATHCONV=1
 cd "$(dirname "$0")"
 
-# The two binaries under test. OLD = the release currently deployed, NEW =
-# the release being rehearsed. Point these at your own builds.
-OLD_BIN=${OLD_BIN:-../build/bin/geth-previous-linux-amd64}
-NEW_BIN=${NEW_BIN:-../build/bin/geth-linux-amd64}
-# Short commit the NEW binary must report, so a stale image is caught. Derived
-# from the binary itself unless overridden.
-NEW_COMMIT=${NEW_COMMIT:-}
+OLD_BIN=../build/bin/geth-df31f81f-RUNNING-IN-PROD-linux-amd64
+NEW_BIN=../build/bin/geth-e735e838-LATEST-all-fixes-linux-amd64
 DC="docker compose"
 ART=artifacts
 VALIDATORS="1 2 3 4"
@@ -50,7 +45,7 @@ ipc(){ docker exec "rehearsal-node$1" geth attach --exec "$2" /data/geth.ipc 2>/
 # would otherwise reach $(( )) arithmetic and abort the driver under set -u
 head_of(){ ipc "$1" 'eth.blockNumber' | grep -oE '^[0-9]+$' | head -1; }
 # miner.start() REQUIRES an explicitly-set etherbase on this geth — raw
-# miner.start() fails with "etherbase must be explicitly specified". The
+# miner.start() fails with "etherbase must be explicitly specified". Prod's
 # autoMine-v2.js learned the same lesson (its unlock() calls setEtherbase
 # first); mirror it for the driver's forced-mining steps.
 mine_on(){ ipc "$1" 'try{miner.setEtherbase(eth.accounts[0])}catch(e){}; if(!eth.mining)miner.start()' >/dev/null; }
@@ -113,7 +108,7 @@ tripwire(){ # $1=label
   [ -f "$SINCE_FILE" ] && since="--since $(cat "$SINCE_FILE")"
   date -u +%FT%TZ > "$SINCE_FILE"
   for c in $(docker ps -a --format '{{.Names}}' | grep '^rehearsal-' ); do
-    # 'Unable to attach' is the entrypoint's own benign IPC-startup race (the entrypoint's
+    # 'Unable to attach' is the entrypoint's own benign IPC-startup race (prod's
     # script documents it) — a client-side message, not a geth crash. And geth's
     # real bad-block report is a '########## BAD BLOCK #########' banner: match
     # the frame, not the bare words, because a block hash ending in ...bad
@@ -151,7 +146,7 @@ set_env(){ # $1=KEY $2=VAL  (updates .env used by compose)
 
 # STRICT relay check. For a validator: freeze its automine + miner first so it
 # cannot mine its own tx into a block (which would fake a relay pass) — this is
-# the silent-failure mode the arming step exists to prevent.
+# the prod silent-failure mode (see prod start_network.sh step 4.5).
 relay_gate(){ # $1=idx $2=label
   local i="$1" witness=5
   [ "$i" = "5" ] && witness=6
@@ -162,7 +157,7 @@ relay_gate(){ # $1=idx $2=label
   if lg relaycheck "$(rpc_url "$i")" "$(rpc_url "$witness")" "$2-node$i"; then
     ok "$2: node$i RELAYS transactions after restart"
   else
-    no "$2: node$i relay DEAD after restart (silent-failure mode!)"
+    no "$2: node$i relay DEAD after restart (prod failure mode!)"
   fi
   if echo "$VALIDATORS" | grep -qw "$i"; then
     docker start "rehearsal-automine-node$i" >/dev/null 2>&1 || true
@@ -199,7 +194,7 @@ prep(){
   for i in $ALLNODES; do set_env "NODE${i}_TAG" old; done
   for i in $VALIDATORS; do set_env "NODE${i}_RECOMMIT" 2s; done
   # genesis: shanghai+cancun activate 8 minutes from now (forks crossed live
-  # during p1, like a real chain's history; berlin/london cross at block 120 —
+  # during p1, like prod's real history; berlin/london cross at block 120 —
   # sequential bring-up + arming must finish mining past 120 before this)
   FORK_TIME=$(( $(date +%s) + 480 ))
   sed "s/__FORK_TIME__/$FORK_TIME/" genesis.tpl.json > genesis.json
@@ -219,13 +214,22 @@ prep(){
     $DC run --rm --entrypoint "" "node$i" geth account import --datadir /data --password /run/secrets/signer.pw /data/import.key >/dev/null 2>&1 || { echo "key import failed node$i"; exit 1; }
     rm -f "data/node$i/import.key"
   done
+  # STANDBY validator keys for the PoA² phase: node5/node6 hold an unlocked
+  # signer key but are absent from the genesis signer set, so they seal nothing
+  # until PoA² votes them in.
+  echo 8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba > data/node5/import.key
+  echo 92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e > data/node6/import.key
+  for i in 5 6; do
+    $DC run --rm --entrypoint "" "node$i" geth account import --datadir /data --password /run/secrets/signer.pw /data/import.key >/dev/null 2>&1 || { echo "standby key import failed node$i"; exit 1; }
+    rm -f "data/node$i/import.key"
+  done
   echo "prep done: images old/new built, genesis fork time $FORK_TIME, keys in place"
 }
 
 # =========================================================================== p1
 p1(){
-  echo "===== P1: sequential bring-up + baseline on the OLD binary ====="
-  # sequential bring-up with readiness + peering after each (matching a live bring-up)
+  echo "===== P1: sequential bring-up + baseline on OLD (df31f81f) ====="
+  # sequential bring-up with readiness + peering after each (prod procedure)
   for i in $ALLNODES; do
     echo -n "  node$i: starting..."
     $DC up -d --no-deps "node$i" >/dev/null 2>&1
@@ -234,13 +238,13 @@ p1(){
     echo " ready"
   done
   addpeers_all; sleep 5
-  # consistency gate before any sealing (bring-up consistency gate)
+  # consistency gate before any sealing (prod step 4)
   local heads
   heads=$(for i in $ALLNODES; do ipc "$i" 'eth.getBlock("latest").hash'; done | sort -u | grep -c .)
   [ "$heads" -eq 1 ] && ok "p1: all 6 agree on genesis head before sealing" || no "p1: $heads distinct heads before sealing"
-  # relay arming: force >=3 validators to mine, restart each
+  # relay arming (prod step 4.5): force >=3 validators to mine, restart each
   # node once so its downloader runs, then stop forced mining
-  echo "  arming tx relay (rolling-restart procedure)..."
+  echo "  arming tx relay (prod rolling-restart procedure)..."
   for v in $VALIDATORS; do mine_on "$v"; done
   sleep 5
   H_ARM=$(head_of 1)
@@ -311,11 +315,7 @@ p2(){
       docker rm -f "$BGID" >/dev/null 2>&1; gate P2
     fi
     VSTR=$(docker exec "rehearsal-node$i" geth version 2>/dev/null | grep -i 'git commit:' | head -1 | tr -d '\r')
-    if [ -n "$NEW_COMMIT" ]; then
-      echo "$VSTR" | grep -qi "$NEW_COMMIT" && ok "p2: node$i reports NEW commit" || no "p2: node$i version wrong: $VSTR"
-    else
-      [ -n "$VSTR" ] && ok "p2: node$i reports a commit ($VSTR)" || no "p2: node$i reported no version"
-    fi
+    echo "$VSTR" | grep -qi e735e838 && ok "p2: node$i reports NEW commit" || no "p2: node$i version wrong: $VSTR"
     relay_gate "$i" "p2"
     blocks_advanced "p2 during node$i swap" "$H_PRE" 3
     agree_check "p2 after node$i"
@@ -347,7 +347,7 @@ p3(){
   CID=$(ipc 5 'eth.chainId()' 2>/dev/null); GP=$(lg watch "$(rpc_url 6)" 30 p3 >/dev/null 2>&1 && echo ok || echo fail)
   [ "$GP" = "ok" ] && ok "p3: HTTP polling continuity clean on node6" || no "p3: HTTP polling saw errors"
   # fresh 7th node on the NEW binary must FULL-SYNC the whole chain from
-  # genesis (archive peers serve no snapshots — the usual archive-node reality)
+  # genesis (archive peers serve no snapshots — prod reality)
   echo "  full-syncing a fresh node7 from genesis..."
   docker rm -f rehearsal-node7 >/dev/null 2>&1 || true
   # pwd -W gives a Windows-style path git-bash+docker both accept; plain pwd elsewhere
@@ -426,7 +426,7 @@ p5(){
   # deliberately ignore manually-stopped containers (verified live — node4
   # stayed 'exited'). A real crash is the PROCESS dying: kill geth inside, the
   # entrypoint exits, and unless-stopped revives the container. Ops note for
-  # operators: `docker kill`/`docker stop` on a node will NOT auto-restart it.
+  # prod: `docker kill`/`docker stop` on a node will NOT auto-restart it.
   docker exec rehearsal-node4 sh -c 'pkill -9 geth' >/dev/null 2>&1
   sleep 150
   blocks_advanced "p5 outage window at ${HOLD} tx/s" "$H_OUT" 60
@@ -520,14 +520,176 @@ p7(){
   gate P7
 }
 
+# =========================================================================== p9
+# PoA²: automatic validator replacement, running as a sidecar on every
+# validator. Never exercised on a live network, and it interacts with the
+# on-demand sealing policy in a way nothing else here tests — a healthy
+# validator whose sealing sidecar died looks identical, through
+# clique.status(), to a validator that is down.
+STANDBY5=0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc
+STANDBY6=0x976ea74026e726554db657fa54763abd0c3a0aa9
+PHANTOM=0x00000000000000000000000000000000deadbe01
+V3=3c44cdddb6a900fa2b585dd299e03d12fa4293bc
+V2=70997970c51812dc3a010c7d01b50e0d17dc79c8
+V4=90f79bf6eb2c4f870365e785982e1f101e93b906
+
+signer_list(){ ipc "${1:-1}" 'JSON.stringify(clique.getSigners())'; }
+signer_count(){ ipc "${1:-1}" 'clique.getSigners().length' | grep -oE '^[0-9]+$' | head -1; }
+is_signer(){ signer_list 1 | grep -qi "${1#0x}"; }
+poa2_up(){ for v in $VALIDATORS; do $DC up -d --no-deps "poa2-node$v" >/dev/null 2>&1; done; }
+poa2_down(){ for v in $VALIDATORS; do docker rm -f "rehearsal-poa2-node$v" >/dev/null 2>&1; done; }
+poa2_says(){ docker logs --since "${2:-10m}" "rehearsal-poa2-node${1}" 2>&1 | grep -c "$3" || true; }
+
+p9(){
+  echo "===== P9: PoA² automatic validator replacement ====="
+  # Standbys must be running and sealing-capable BEFORE promotion, or a vote
+  # installs a signer that never seals.
+  $DC up -d --no-deps automine-node5 automine-node6 >/dev/null 2>&1
+  sleep 5
+  S0=$(signer_count 1)
+  [ "$S0" = "4" ] && ok "p9: starting from 4 signers" || { no "p9: expected 4 signers, got ${S0:-?}"; gate P9; }
+
+  # ---- 9a: no false positives on a healthy network -----------------------
+  # WARM-UP FIRST. sealerActivity is a trailing 64-BLOCK window, not a time
+  # window. On a chain that has been idle — or that has just restarted — those
+  # 64 blocks are whatever was sealed before the pause, so a validator which
+  # was legitimately down back then still reads as inactive now. Starting the
+  # controller on a stale window makes it act on history. Operational rule:
+  # let every validator seal into the current window BEFORE starting PoA².
+  echo "  ---- 9a: warm-up so all four validators appear in the activity window ----"
+  lg steady "$(rpc_url 5)" 8 100 p9-warmup 0 >/dev/null 2>&1 || true
+  ACT=$(ipc 1 'JSON.stringify(clique.status().sealerActivity)')
+  echo "  activity after warm-up: $ACT"
+  ZEROS=$(printf '%s' "$ACT" | grep -oE ':0[,}]' | wc -l)
+  [ "$ZEROS" -eq 0 ] && ok "p9a: warm-up left every validator active in the window" \
+                     || no "p9a: $ZEROS validator(s) still read as inactive after warm-up — PoA² would act on a stale window"
+
+  echo "  ---- 9a: healthy network, PoA² must stay quiet ----"
+  poa2_up
+  BGID=$(lg_bg steady "$(rpc_url 5)" 8 200 p9a-bg 25)   # bursty: idle gaps included
+  sleep 200
+  docker rm -f "$BGID" >/dev/null 2>&1 || true
+  S1=$(signer_count 1)
+  FLAGS=$(poa2_says 1 6m "is not mining")
+  [ "$S1" = "4" ] && ok "p9a: signer set untouched on a healthy network (still 4)" \
+                  || no "p9a: signer set changed to ${S1:-?} with every validator healthy"
+  [ "$FLAGS" -eq 0 ] && ok "p9a: zero false 'not mining' flags across idle gaps" \
+                     || no "p9a: $FLAGS false flags raised while all validators were healthy"
+  tripwire "p9a"
+
+  # ---- 9b: genuine fault, standby promoted -------------------------------
+  echo "  ---- 9b: stop validator node3, PoA² must replace it ----"
+  BGID=$(lg_bg steady "$(rpc_url 5)" 8 480 p9b-bg 0)
+  sleep 5
+  H_B=$(head_of 5)
+  docker stop rehearsal-automine-node3 rehearsal-node3 >/dev/null 2>&1
+  REPLACED=0
+  for _ in $(seq 1 100); do
+    if is_signer "$STANDBY5" || is_signer "$STANDBY6"; then REPLACED=1; break; fi
+    sleep 4
+  done
+  sleep 40   # let the removal half of the cycle land too
+  S2=$(signer_count 1); PROMOTED=""
+  is_signer "$STANDBY5" && PROMOTED="$PROMOTED node5"
+  is_signer "$STANDBY6" && PROMOTED="$PROMOTED node6"
+  [ "$REPLACED" -eq 1 ] && ok "p9b: standby promoted ($PROMOTED)" || no "p9b: no standby promoted within ~7 min"
+  is_signer "$V3" && no "p9b: the failed validator is STILL a signer (removal half never landed)" \
+                  || ok "p9b: failed validator voted out"
+  [ "$S2" = "4" ] && ok "p9b: signer set back to 4" || no "p9b: signer set is ${S2:-?}, expected 4"
+  blocks_advanced "p9b chain through the replacement" "$H_B" 60
+  agree_check "p9b"
+  docker rm -f "$BGID" >/dev/null 2>&1 || true
+  tripwire "p9b"
+
+  # ---- 9c: repeat fault (does the detector re-arm?) ----------------------
+  echo "  ---- 9c: second fault, must heal again (tests the cooldown reset) ----"
+  BGID=$(lg_bg steady "$(rpc_url 5)" 8 480 p9c-bg 0)
+  sleep 5
+  H_C=$(head_of 5)
+  docker stop rehearsal-automine-node2 rehearsal-node2 >/dev/null 2>&1
+  HEAL2=0
+  for _ in $(seq 1 100); do
+    C=$(signer_count 1)
+    if [ "${C:-0}" = "4" ] && ! is_signer "$V2"; then HEAL2=1; break; fi
+    sleep 4
+  done
+  [ "$HEAL2" -eq 1 ] && ok "p9c: SECOND fault healed too — detector re-armed after cooldown" \
+                     || no "p9c: second fault NOT healed — detector never re-armed (one-shot controller)"
+  blocks_advanced "p9c chain through the second replacement" "$H_C" 60
+  docker rm -f "$BGID" >/dev/null 2>&1 || true
+  agree_check "p9c"
+  tripwire "p9c"
+
+  # ---- 9d: the SAM interaction — healthy node, dead sealing sidecar ------
+  echo "  ---- 9d: kill only node4's SEALING sidecar (node itself stays healthy) ----"
+  # The case operators will actually hit: the validator is up, synced and
+  # serving RPC, but its sealing sidecar died so it stops sealing. Through
+  # clique.status() that is indistinguishable from a dead validator — yet the
+  # correct fix is restarting a sidecar, not burning a standby and evicting a
+  # working node.
+  poa2_down; poa2_up   # fresh controllers so prior state cannot mask this
+  sleep 5
+  docker stop rehearsal-automine-node4 >/dev/null 2>&1
+  BGID=$(lg_bg steady "$(rpc_url 5)" 8 320 p9d-bg 0)
+  sleep 300
+  docker rm -f "$BGID" >/dev/null 2>&1 || true
+  if is_signer "$V4"; then
+    ok "p9d: healthy node with a dead sealing sidecar was NOT evicted (set=$(signer_count 1))"
+  else
+    no "p9d: PoA² EVICTED a healthy validator whose sealing sidecar had died — the fix is restarting the sidecar, not replacing the node"
+  fi
+  docker start rehearsal-automine-node4 >/dev/null 2>&1
+  tripwire "p9d"
+
+  # ---- 9e: phantom standby (the halt hazard) -----------------------------
+  echo "  ---- 9e: propose a standby with NO node behind it ----"
+  # A signer that never seals still counts toward len(signers) and raises the
+  # recent-signer bar. This measures what that costs in liveness margin.
+  poa2_down   # manual control: PoA² must not fight the experiment
+  for v in $VALIDATORS; do ipc "$v" "clique.propose(\"$PHANTOM\", true)" >/dev/null 2>&1; done
+  ADDED=0
+  for _ in $(seq 1 45); do is_signer "$PHANTOM" && { ADDED=1; break; }; sleep 2; done
+  if [ "$ADDED" -eq 1 ]; then
+    ok "p9e: phantom signer accepted — set is now $(signer_count 1)"
+    BGID=$(lg_bg steady "$(rpc_url 5)" 8 220 p9e-bg 0)
+    sleep 10
+    H_E=$(head_of 5)
+    echo "  now stopping ONE healthy validator on top of the phantom"
+    docker stop rehearsal-automine-node1 rehearsal-node1 >/dev/null 2>&1
+    sleep 100
+    H_E2=$(head_of 5); DRIFT=$(( ${H_E2:-0} - ${H_E:-0} ))
+    docker rm -f "$BGID" >/dev/null 2>&1 || true
+    if [ "$DRIFT" -le 5 ]; then
+      ok "p9e: HAZARD CONFIRMED — phantom + one real outage halted the chain (drift=$DRIFT). Never list a standby without a running node."
+    else
+      ok "p9e: chain survived phantom + one outage (drift=$DRIFT) — margin thinner but intact"
+    fi
+    docker start rehearsal-node1 rehearsal-automine-node1 >/dev/null 2>&1
+    wait_ready 1 60 || true
+    for v in $VALIDATORS; do mine_on "$v"; done
+    for v in $VALIDATORS; do ipc "$v" "clique.propose(\"$PHANTOM\", false)" >/dev/null 2>&1; done
+    for _ in $(seq 1 60); do is_signer "$PHANTOM" || break; sleep 2; done
+    is_signer "$PHANTOM" && no "p9e: phantom could not be voted back out" \
+                         || ok "p9e: phantom removed, set restored to $(signer_count 1)"
+  else
+    no "p9e: phantom proposal never carried (unexpected — the vote should pass)"
+  fi
+  tripwire "p9e"
+
+  echo "  final signer set: $(signer_list 1)"
+  poa2_down
+  for i in 2 3; do docker start "rehearsal-node$i" "rehearsal-automine-node$i" >/dev/null 2>&1; wait_ready "$i" 60 || true; done
+  addpeers_all
+  gate P9
+}
+
 # =========================================================================== p8
 p8(){
   echo "===== P8: report ====="
   {
     echo "# PureChain upgrade rehearsal — $(date -u +%F)"
     echo
-    echo "Old binary: $OLD_BIN"
-    echo "New binary: $NEW_BIN"
+    echo "Old binary: df31f81f (byte-identical to prod, sha verified). New: e735e838."
     echo
     echo "## Gates"
     echo '```'
@@ -556,8 +718,8 @@ p8(){
 }
 
 # recover: re-arm the network after a WHOLE-NETWORK restart (engine bounce,
-# power event, full compose down/up). Mirrors the bring-up script's arming
-# step. Without this, every node's tx relay stays unarmed on an idle chain:
+# power event, full compose down/up). Reproduces prod start_network.sh step
+# 4.5. Without this, every node's tx relay stays unarmed on an idle chain:
 # RPC accepts transactions, nobody gossips them, automine never wakes the
 # other validators, and the network mines NOTHING while looking healthy —
 # reproduced live in this rehearsal on 2026-08-13.
@@ -600,8 +762,9 @@ case "${1:-}" in
   p6) p6 ;;
   p7) p7 ;;
   p8) p8 ;;
+  p9) p9 ;;
   all) prep && p1 && p2 && p3 && p4 && p5 && p6 && p7 && p8 ;;
   recover) recover ;;
   down) down ;;
-  *) echo "usage: drive.sh {prep|p1|p2|p3|p4|p5|p6|p7|p8|recover|all|down}"; exit 2 ;;
+  *) echo "usage: drive.sh {prep|p1..p9|recover|all|down}"; exit 2 ;;
 esac

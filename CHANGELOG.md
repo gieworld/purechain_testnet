@@ -4,6 +4,62 @@ All changes are on top of **go-ethereum v1.13.15** (the last official Clique rel
 
 ---
 
+## [Unreleased] — 2026-08-19 — PoA2 validator-replacement controller
+
+### Added - `rehearsal/scripts/poa2.js`
+
+A controller that watches `clique.status().sealerActivity` and, when a signer
+stops sealing, votes in a pre-vetted standby and votes the failed signer out.
+It is a **pure RPC controller** - nothing in the client implements it, and it
+works against any Clique network. It runs as a sidecar on every validator,
+like the sealing script.
+
+Rehearsed end to end on a throwaway six-node network; **not yet run on a
+production network**. Treat it as reviewed and exercised rather than
+battle-tested.
+
+Rehearsing it surfaced six defects that a naive implementation shares, each of
+which would otherwise appear during a real outage - the worst moment to learn
+that automatic failover does not work:
+
+1. **`setInterval` never fires in a headless sidecar.** `geth attach --preload`
+   runs the script, hits EOF on stdin and exits, so the timer never runs.
+   Measured: the banner printed 229 times while the check ran **zero** times -
+   it looked healthy in the logs and did nothing. Use a blocking
+   `admin.sleep()` loop instead.
+2. **Acting on the first zero-activity reading** evicts validators that are
+   merely restarting for an upgrade. A suspect must stay silent for a
+   confirmation window, and recovering clears the flag.
+3. **A latched state machine goes permanently deaf** if a replacement cycle
+   never completes - and one will, whenever a vote cannot reach a majority.
+   Every later failure is then ignored, silently. Time it out and reset.
+4. **A standby with no node behind it never seals**, yet still counts toward
+   `len(signers)` and raises Clique's recent-signer bar, so the controller
+   meant to heal the chain can halt it. Verify that a promoted standby
+   actually seals before removing anyone, and roll it back if it does not.
+5. **"Down" and "up but not sealing" are indistinguishable** through
+   `clique.status()`, so a healthy node whose sealing sidecar died gets
+   replaced - spending a standby on a problem a sidecar restart fixes. They
+   *are* distinguishable in `admin.peers`: a node that is down leaves the
+   network. Warn, and wait far longer, for one that is still connected.
+6. **An exhausted standby pool is not a reason to stall.** Clique needs
+   `floor(n/2)+1` sealers, so four signers with one dead needs 3 of 3 - no
+   margin - while removing it leaves 3 healthy needing 2. Shrink rather than
+   stall, but never below three signers.
+
+Operating rules that follow: run the controller on **every** validator
+including promoted standbys (a local vote needs a majority of the current set,
+so quorum erodes otherwise), keep the candidate pool identical everywhere,
+stop it during rolling upgrades, and never start it on an idle or freshly
+restarted chain where the activity window still holds pre-pause history.
+
+Harness: `quick-poa2.sh` (90-second smoke test) plus `poa2-edge.sh`,
+`poa2-test-b.sh`, `poa2-test-phantom.sh`, `poa2-test-reachability.sh` and
+`poa2-test-exhaustion.sh` for the cases above. Full documentation at
+https://gieworld.github.io/purechain-docs/03-operating/poa2/
+
+---
+
 ## [Unreleased] — 2026-08-13 — upgrade rehearsal harness
 
 ### Added — `rehearsal/`: a dress-rehearsal harness for node upgrades
