@@ -1,32 +1,30 @@
 # PureChain upgrade rehearsal
 
-A production-shaped rehearsal of the `df31f81f -> e735e838` binary upgrade,
-run entirely in local Docker. This directory is both the harness and the
-campaign spec.
+A dress rehearsal for a PureChain node binary upgrade, run entirely in local
+Docker. This directory is both the harness and the campaign spec.
 
 ## Why this exists
 
 The smoke-test suite (`smoke-test/`) proves the binaries are correct on
 ephemeral networks it invents. This rehearsal proves the **upgrade procedure**
-is safe on a network shaped like the real one — because production has three
-properties no smoke test modeled, all read from the live AWS stack on
-2026-08-12 (read-only):
+is safe on a network shaped like one that is actually operating — because a
+running deployment has three properties no smoke test modeled:
 
 1. **On-demand sealing ("smart auto-mining").** Validators run WITHOUT
    `--mine`; four automine sidecars attach over IPC and start/stop the miner
-   based on activity (`scripts/autoMine-v2.js`, verbatim from prod). No empty
+   based on activity (`scripts/autoMine-v2.js`). No empty
    blocks when idle — and a whole class of upgrade risk (does the novelty
    survive the new binary?) that must be tested.
 2. **The relay-arming trap.** After a restart, a geth node accepts RPC
    transactions but does NOT gossip them until a downloader sync re-arms it —
-   prod's `start_network.sh` step 4.5 exists precisely because of this, and a
-   binary upgrade IS a restart. Every node swap in this rehearsal is followed
+   a deployment's bring-up script needs an explicit arming step because of
+   this, and a binary upgrade IS a restart. Every node swap here is followed
    by a STRICT relay check (validator's miner frozen so it cannot fake a pass
    by mining its own tx).
-3. **Fork-sensitive bring-up.** Prod fork-stalled 2-vs-2 on 2026-07-04
-   (simultaneous validator start) and forked 3-vs-3 on 2026-07-16
-   (`debug.setHead`). Bring-up here is sequential with a consistency gate,
-   exactly like prod's script; `debug.setHead` is never used.
+3. **Fork-sensitive bring-up.** Starting every validator simultaneously can
+   split a Clique network before the peer mesh exists, and an in-place rewind
+   (`debug.setHead`) can fork it. Bring-up here is sequential with a
+   consistency gate before any sealing, and `debug.setHead` is never used.
 
 Prod-fidelity details: chainId 424242, period-1 clique, zeroBaseFee +
 gasprice 0 everywhere, `syncmode=full`, `gcmode=archive`, `snapshot=false`,
@@ -36,20 +34,27 @@ Genesis mirrors the real fork history in shape: berlin/london activate
 mid-chain (block 120), shanghai+cancun by timestamp (~6 min after start), so
 the chain the upgrade runs on contains pre-fork history like the real one.
 
-Deliberate deviations: test keys only (hardhat accounts; prod signer keys
-never leave AWS), no `--nat`/ethstats (the monitor sidecar records what
-ethstats would show), genesis gasLimit 30M = prod's current effective limit.
+Deliberate deviations: throwaway test keys only (well-known hardhat accounts —
+never reuse them, and never point this harness at a real network), no
+`--nat`/ethstats (the monitor sidecar records what ethstats would show), and a
+genesis gasLimit of 30M, the effective limit in practice.
 
 ## Layout
 
     drive.sh          campaign driver — phases with gates (see below)
     docker-compose.yml  6 nodes + 4 automine sidecars + monitor + loadgen
-    Dockerfile.node   prod's image recipe, parameterized old/new binary
-    genesis.tpl.json  prod-shaped genesis (fork time stamped at prep)
-    scripts/          entrypoint.sh + autoMine-v2.js (verbatim prod),
+    Dockerfile.node   node image recipe, parameterized old/new binary
+    genesis.tpl.json  deployment-shaped genesis (fork time stamped at prep)
+    scripts/          entrypoint.sh, autoMine-v2.js (SAM), poa2.js (PoA²),
                       addpeers.js (generated, deterministic nodekeys)
     loadgen/          ethers.js client: load, latency probes, ramp,
                       contract/event checks, relay checks
+    quick-poa2.sh     90-second PoA² smoke test (detect -> promote -> remove)
+    poa2-edge.sh      PoA² during a rolling upgrade / dead sidecar / repeat fault
+    poa2-test-b.sh          healthy node whose miner stopped
+    poa2-test-phantom.sh    standby with no node behind it
+    poa2-test-reachability.sh  down vs not-sealing
+    poa2-test-exhaustion.sh    standby pool empty
     monitor/          referee: heads, settled-hash agreement, alerts
     artifacts/        all evidence: CSVs, gates.log, tripwires, REPORT.md
 
@@ -72,6 +77,11 @@ ethstats would show), genesis gasLimit 30M = prod's current effective limit.
 | p6 | two-signer halt drill: stop node1+node2 | chain HALTS (drift <= 2 — Clique limit=3/4 confirmed); resumes promptly when a third signer returns |
 | p7 | rollback: node3 alone back to OLD (mixed soak) then forward; FULL network rollback to OLD (abort path), soak, then forward to final all-NEW state | OLD reads NEW's writes both times; relays re-arm every restart; all agree at every step |
 | p8 | report | `artifacts/REPORT.md` with gates, latency table, ceiling, alerts |
+| p9 | PoA² validator replacement: no false positives, genuine fault, repeat fault, dead sidecar, phantom standby | run separately (`all` stops at p8) |
+
+`./drive.sh recover` re-arms transaction relay after a whole-network restart —
+without it a restarted network accepts transactions, gossips none, and mines
+nothing while looking healthy.
 
 ## Reading the results
 

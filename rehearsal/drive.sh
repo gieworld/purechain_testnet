@@ -2,9 +2,9 @@
 # PureChain upgrade-rehearsal campaign driver.
 #
 # Runs the complete campaign phase by phase against the docker-compose network
-# in this directory, mirroring the production operational procedures read from
-# the live AWS stack on 2026-08-12 (sequential fork-safe bring-up, automine
-# sidecars, relay arming after restarts).
+# in this directory, mirroring the operational procedures of a running
+# deployment (sequential fork-safe bring-up, on-demand sealing sidecars, relay
+# arming after restarts).
 #
 #   ./drive.sh prep       build images, genesis, keys        (~5 min, no chain)
 #   ./drive.sh p1         bring-up + baseline on OLD         (~20 min)
@@ -25,8 +25,14 @@ set -u
 export MSYS_NO_PATHCONV=1
 cd "$(dirname "$0")"
 
-OLD_BIN=../build/bin/geth-df31f81f-RUNNING-IN-PROD-linux-amd64
-NEW_BIN=../build/bin/geth-e735e838-LATEST-all-fixes-linux-amd64
+# The two binaries under test: OLD = the release currently deployed, NEW = the
+# release being rehearsed. Override for your own builds:
+#   OLD_BIN=/path/to/old NEW_BIN=/path/to/new ./drive.sh p2
+OLD_BIN=${OLD_BIN:-../build/bin/geth-previous-linux-amd64}
+NEW_BIN=${NEW_BIN:-../build/bin/geth-linux-amd64}
+# Short commit the NEW binary must report, so a stale image is caught. Left
+# empty, the version check only asserts that some commit is stamped.
+NEW_COMMIT=${NEW_COMMIT:-}
 DC="docker compose"
 ART=artifacts
 VALIDATORS="1 2 3 4"
@@ -146,7 +152,7 @@ set_env(){ # $1=KEY $2=VAL  (updates .env used by compose)
 
 # STRICT relay check. For a validator: freeze its automine + miner first so it
 # cannot mine its own tx into a block (which would fake a relay pass) — this is
-# the prod silent-failure mode (see prod start_network.sh step 4.5).
+# the prod silent-failure mode (see the bring-up script's arming step).
 relay_gate(){ # $1=idx $2=label
   local i="$1" witness=5
   [ "$i" = "5" ] && witness=6
@@ -228,7 +234,7 @@ prep(){
 
 # =========================================================================== p1
 p1(){
-  echo "===== P1: sequential bring-up + baseline on OLD (df31f81f) ====="
+  echo "===== P1: sequential bring-up + baseline on the OLD binary ====="
   # sequential bring-up with readiness + peering after each (prod procedure)
   for i in $ALLNODES; do
     echo -n "  node$i: starting..."
@@ -315,7 +321,11 @@ p2(){
       docker rm -f "$BGID" >/dev/null 2>&1; gate P2
     fi
     VSTR=$(docker exec "rehearsal-node$i" geth version 2>/dev/null | grep -i 'git commit:' | head -1 | tr -d '\r')
-    echo "$VSTR" | grep -qi e735e838 && ok "p2: node$i reports NEW commit" || no "p2: node$i version wrong: $VSTR"
+    if [ -n "$NEW_COMMIT" ]; then
+      echo "$VSTR" | grep -qi "$NEW_COMMIT" && ok "p2: node$i reports NEW commit" || no "p2: node$i version wrong: $VSTR"
+    else
+      [ -n "$VSTR" ] && ok "p2: node$i reports a commit ($VSTR)" || no "p2: node$i reported no version"
+    fi
     relay_gate "$i" "p2"
     blocks_advanced "p2 during node$i swap" "$H_PRE" 3
     agree_check "p2 after node$i"
@@ -689,7 +699,8 @@ p8(){
   {
     echo "# PureChain upgrade rehearsal — $(date -u +%F)"
     echo
-    echo "Old binary: df31f81f (byte-identical to prod, sha verified). New: e735e838."
+    echo "Old binary: $OLD_BIN"
+    echo "New binary: $NEW_BIN"
     echo
     echo "## Gates"
     echo '```'
@@ -718,7 +729,7 @@ p8(){
 }
 
 # recover: re-arm the network after a WHOLE-NETWORK restart (engine bounce,
-# power event, full compose down/up). Reproduces prod start_network.sh step
+# power event, full compose down/up). Mirrors a deployment bring-up script's
 # 4.5. Without this, every node's tx relay stays unarmed on an idle chain:
 # RPC accepts transactions, nobody gossips them, automine never wakes the
 # other validators, and the network mines NOTHING while looking healthy —

@@ -718,7 +718,7 @@ Deployable build of the patched node:
 |---|---|
 | Artifact | `build/bin/geth-linux-amd64` |
 | `geth version` | `1.13.15-stable` |
-| Git commit | `df31f81fdb360dd8a540286fee10e959f7d3cade` |
+| Git commit | *(the commit this build was cut from)* |
 | Target | linux/amd64, statically linked (`CGO_ENABLED=0`) — runs on any Linux x86-64, incl. Alpine |
 | Go | go1.21.12 |
 | Built | 2026-07-05 |
@@ -727,7 +727,7 @@ Reproduce:
 
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/bin/geth-linux-amd64 ./cmd/geth
-geth version   # Git Commit must read df31f81f...
+geth version   # Git Commit must match the release you built
 ```
 
 > Supersedes the earlier `96545ba1c` build. This build adds the block-fetcher

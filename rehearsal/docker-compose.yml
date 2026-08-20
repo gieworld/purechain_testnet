@@ -22,7 +22,7 @@
 #     single shared image.
 #
 # The driver (drive.sh) owns bring-up ordering — prod brings nodes up
-# sequentially with a consistency gate (see prod start_network.sh), so a plain
+# sequentially with a consistency gate before sealing, so a plain
 # `docker compose up -d` of everything at once is NOT the supported path.
 
 services:

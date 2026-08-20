@@ -29,17 +29,17 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/bin/geth-linux-amd64 ./c
 ./build/bin/geth-linux-amd64 version   # -> 1.13.15-stable, Git Commit = your HEAD
 ```
 
-See the CHANGELOG **"Release Binary (linux/amd64)"** section for the exact commit
-of the current deployed build.
+The `Git Commit` a release was built from is stated in its GitHub release
+notes; check your binary against it.
 
 **Alternative — native build on WSL.** If you build *inside* WSL, use the native
 filesystem — building on the Windows `/mnt/d` mount crashes the Go compiler (9p mount):
 
 ```bash
 rsync -a --delete --exclude='.git' --exclude='build/bin' \
-  /mnt/d/Projects/geth_cancun/ ~/geth_build/
+  <path-to-your-checkout>/ ~/geth_build/
 cd ~/geth_build && go build -o geth ./cmd/geth
-cp geth /mnt/d/Projects/geth_cancun/build/bin/geth
+cp geth <path-to-your-checkout>/build/bin/geth-linux-amd64
 ```
 
 ## Create a network
