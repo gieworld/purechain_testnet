@@ -1,408 +1,154 @@
 # PureChain Testnet — execution client
 
 **[📖 Documentation](https://gieworld.github.io/purechain-docs/)** ·
-**[⬇️ Download a release](https://github.com/gieworld/purechain_testnet/releases/latest)** ·
+**[⬇️ Download](https://github.com/gieworld/purechain_testnet/releases/latest)** ·
 **[🚀 Run your own network](https://gieworld.github.io/purechain-docs/02-run-your-own/)**
 
-The execution client for the **PureChain testnet**: a permissioned,
-**free-gas** EVM network. Transactions cost zero — there is no base fee and no
-tip — and blocks are produced by a known set of validators rather than by
-open mining or staking.
+The execution client for the **PureChain testnet**: a permissioned, **free-gas**
+EVM network. Transactions cost zero — no base fee, no tip — and blocks are
+produced by a known set of validators rather than by open mining or staking.
 
-It is a fork of **go-ethereum v1.13.15**, kept close to upstream so the client
-behaves like the geth operators already know: same CLI, same JSON-RPC, same
-tooling (MetaMask, ethers, Hardhat, block explorers). The fork exists because
-PureChain needs a combination stock geth no longer supports — a
-**Proof-of-Authority (Clique)** validator set running the **current EVM**
-(Shanghai and Cancun: PUSH0, transient storage, EIP-4788, blob-carrying
-transaction plumbing) with zero-cost transactions. Upstream ties post-Shanghai
-forks to the PoS Merge and dropped Clique in v1.14, so this fork maintains that
-path.
+It is a fork of **go-ethereum v1.13.15**, kept deliberately close to upstream so
+the client behaves like the geth operators already know: same CLI, same
+JSON-RPC, same tooling (MetaMask, ethers, Hardhat, block explorers). The fork
+exists because PureChain needs a combination stock geth no longer supports — a
+**Clique (Proof-of-Authority)** validator set running the **current EVM**
+(Shanghai and Cancun: PUSH0, transient storage, EIP-4788) with zero-cost
+transactions. Upstream ties post-Shanghai forks to the PoS Merge and removed
+Clique in v1.14, so this fork keeps that path alive.
 
-Everything is gated so non-PureChain behaviour is untouched: the patches apply
-only when a chain is configured as Clique and/or free-gas, and the client still
-runs an ordinary Ethereum chain unchanged.
+Every change is gated on `Clique != nil` / `zeroBaseFee` / `IsShanghai`, so the
+same binary still runs an ordinary Ethereum chain unchanged.
 
-> **Network parameters** (chainId, validators, activation times) are provisioned
-> per deployment and are **not** hard-coded here — the examples in this repo use a
-> generic placeholder chainId `424242`. See [`network/`](network/) to generate a
-> genesis for your own set of signers.
+> **Network parameters** (chain ID, validators, activation times) are
+> provisioned per deployment and are **not** hard-coded here — examples in this
+> repository use the placeholder chain ID `424242`. See [`network/`](network/)
+> to generate a genesis for your own validator set.
 
-> This is a **fork of [ethereum/go-ethereum](https://github.com/ethereum/go-ethereum)**,
-> pinned to the `v1.13.15` release (the last version that shipped Clique). It is
-> **not affiliated with or endorsed by** the go-ethereum project. Licensed under
-> GPL-3.0 / LGPL-3.0 exactly as upstream — see [`COPYING`](COPYING),
-> [`COPYING.LESSER`](COPYING.LESSER), and [`AUTHORS`](AUTHORS).
+## Quick start
 
-### What changed
+Download a static binary from the [latest release](https://github.com/gieworld/purechain_testnet/releases/latest)
+(linux amd64/arm64, no libc dependency), verify it, and run it:
 
-Roughly **~220 lines across 14 files**, every hunk gated on `Clique != nil` /
-`zeroBaseFee` / `IsShanghai` so non-Clique (mainnet/PoW/PoS) behaviour is
-untouched. The consensus-affecting changes are what make this a real fork rather
-than config. See **[`CHANGELOG.md`](CHANGELOG.md)** for the full, per-file ledger.
+```bash
+sha256sum -c SHA256SUMS.txt
+./purechain-geth-v1.0.0-linux-amd64 version    # Git Commit must match the release
+```
+
+- **Connect to the public network** — RPC endpoint, chain ID and wallet setup
+  are in the [documentation](https://gieworld.github.io/purechain-docs/).
+- **Run your own network** — [step-by-step guide](https://gieworld.github.io/purechain-docs/02-run-your-own/):
+  generate a genesis, start validators, add RPC nodes.
+
+> **Every node on a free-gas network needs `--txpool.pricelimit 0`** — mining or
+> not. Without it a node silently drops and refuses to relay zero-fee
+> transactions. It is the most common misconfiguration.
+
+## What changed from upstream go-ethereum
+
+Roughly **220 lines across 14 files** for the fork itself. The
+consensus-affecting changes are what make this a real fork rather than
+configuration:
 
 | Area | Key files | Summary |
-|------|-----------|---------|
-| Clique → Cancun | `consensus/clique/clique.go`, `params/config.go`, `core/evm.go`, `miner/worker.go` | Accept & seal Shanghai/Cancun headers (no panic), enable the EVM forks for Clique, zero PREVRANDAO + zero `parentBeaconRoot` |
-| Free gas | `consensus/misc/eip1559`, `core/genesis.go`, `eth/backend.go`, `internal/ethapi` | `zeroBaseFee` genesis flag pins base fee to 0; allow `--miner.gasprice 0`; accept zero-fee txs over RPC |
-| Non-merge fixes | `eth/fetcher/block_fetcher.go`, `internal/era`, `core/txpool/blobpool` | Preserve block withdrawals on gossip/history paths upstream assumes die at the Merge |
+|---|---|---|
+| Clique → Cancun | `consensus/clique/`, `params/config.go`, `core/evm.go`, `miner/worker.go` | Accept and seal Shanghai/Cancun headers without panicking, enable the EVM forks for Clique, zero PREVRANDAO and `parentBeaconRoot` |
+| Free gas | `consensus/misc/eip1559`, `core/genesis.go`, `eth/backend.go`, `internal/ethapi` | `zeroBaseFee` genesis flag pins the base fee to 0; allow `--miner.gasprice 0`; accept zero-fee transactions over RPC |
+| Non-merge fixes | `eth/fetcher/`, `internal/era`, `core/txpool/blobpool` | Preserve block withdrawals on gossip and history paths that upstream assumes die at the Merge |
+| Clique sealing | `consensus/clique/wiggle.go` | Out-of-turn delay drawn once per block and anchored to an absolute deadline, making sub-period `--miner.recommit` safe on multi-signer chains |
+| Upstream backports | across `core/`, `crypto/`, `eth/`, `p2p/`, `rpc/` | 31 security and stability fixes from v1.13.15 → v1.17.5 |
 
-### Documentation
+Full per-file ledger in [`CHANGELOG.md`](CHANGELOG.md); the backport adoption
+matrix, including what was rejected and why, in
+[`docs/upstream-backports.md`](docs/upstream-backports.md).
 
-Start at **[gieworld.github.io/purechain-docs](https://gieworld.github.io/purechain-docs/)** —
-the full documentation site: what PureChain is, how to run your own network,
-operating and troubleshooting a live one, and how to join the public network.
+## Repository layout
 
-The documents below live in this repository and go deeper on the client itself:
+| Path | What it is |
+|---|---|
+| [`docs/`](docs/) | Design rationale, operator guide, upgrade runbook, backport matrix |
+| [`network/`](network/) | Example genesis and `gen-genesis.sh` generator |
+| [`smoke-test/`](smoke-test/) | Dockerised regression and compatibility suite (`run-all.sh`) |
+| [`rehearsal/`](rehearsal/) | Six-node harness for rehearsing a node upgrade end to end — rolling upgrade under load, stress, outage and crash drills, rollback — plus the PoA² validator-replacement controller and its tests |
 
-| Doc | What it covers |
-|-----|----------------|
-| [`docs/implementation-plan.md`](docs/implementation-plan.md) | Full design + security rationale |
-| [`docs/operator-guide.md`](docs/operator-guide.md) | Build, genesis, running signer nodes |
-| [`docs/upgrade-runbook.md`](docs/upgrade-runbook.md) | In-place Istanbul → Cancun upgrade of a live chain |
-| [`docs/cancun-gas-free-report.md`](docs/cancun-gas-free-report.md) | Why the network stays gas-free and safe |
-| [`docs/upstream-backports.md`](docs/upstream-backports.md) | Upstream fixes adopted from v1.13.15 → v1.17.5, and what was rejected |
-| [`network/`](network/) | Example genesis + `gen-genesis.sh` generator (generic chainId `424242`) |
-| [`smoke-test/`](smoke-test/) | Dockerized regression/compat suite (`run-all.sh`) |
-| [`rehearsal/`](rehearsal/) | Dress-rehearsal harness: upgrade, stress, outage and rollback drills on a throwaway 6-node network |
+## Building from source
 
-Report security issues privately — see [`SECURITY.md`](SECURITY.md).
+Requires Go 1.19 or later (and a C compiler only for cgo builds).
 
----
-
-The remainder of this document is inherited from upstream go-ethereum and
-describes the base client. All build/CLI instructions below apply to this fork.
-
-## Building the source
-
-For prerequisites and detailed build instructions please read the [Installation Instructions](https://geth.ethereum.org/docs/getting-started/installing-geth).
-
-Building `geth` requires both a Go (version 1.19 or later) and a C compiler. You can install
-them using your favourite package manager. Once the dependencies are installed, run
-
-```shell
-make geth
+```bash
+git clone https://github.com/gieworld/purechain_testnet.git
+cd purechain_testnet
+make geth                     # or: make all, for the full tool suite
 ```
 
-or, to build the full suite of utilities:
+For the portable artifact that ships in releases — statically linked, runs on
+Alpine and glibc images alike:
 
-```shell
-make all
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o geth ./cmd/geth
+./geth version
 ```
+
+Build from a normal checkout, **not** a `git worktree`: on Go 1.21 a worktree
+build silently omits the VCS stamp, leaving `Git Commit` empty and the artifact
+impossible to trace back to source.
+
+More detail, including the verification suite, in
+[building from source](https://gieworld.github.io/purechain-docs/04-client/building-from-source/).
 
 ## Executables
 
-The go-ethereum project comes with several wrappers/executables found in the `cmd`
-directory.
-
-|  Command   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| :--------: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`geth`** | Our main Ethereum CLI client. It is the entry point into the Ethereum network (main-, test- or private net), capable of running as a full node (default), archive node (retaining all historical state) or a light node (retrieving data live). It can be used by other processes as a gateway into the Ethereum network via JSON RPC endpoints exposed on top of HTTP, WebSocket and/or IPC transports. `geth --help` and the [CLI page](https://geth.ethereum.org/docs/fundamentals/command-line-options) for command line options. |
-|   `clef`   | Stand-alone signing tool, which can be used as a backend signer for `geth`.                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-|  `devp2p`  | Utilities to interact with nodes on the networking layer, without running a full blockchain.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-|  `abigen`  | Source code generator to convert Ethereum contract definitions into easy-to-use, compile-time type-safe Go packages. It operates on plain [Ethereum contract ABIs](https://docs.soliditylang.org/en/develop/abi-spec.html) with expanded functionality if the contract bytecode is also available. However, it also accepts Solidity source files, making development much more streamlined. Please see our [Native DApps](https://geth.ethereum.org/docs/developers/dapp-developer/native-bindings) page for details.                                  |
-| `bootnode` | Stripped down version of our Ethereum client implementation that only takes part in the network node discovery protocol, but does not run any of the higher level application protocols. It can be used as a lightweight bootstrap node to aid in finding peers in private networks.                                                                                                                                                                                                                                               |
-|   `evm`    | Developer utility version of the EVM (Ethereum Virtual Machine) that is capable of running bytecode snippets within a configurable environment and execution mode. Its purpose is to allow isolated, fine-grained debugging of EVM opcodes (e.g. `evm --code 60ff60ff --debug run`).                                                                                                                                                                                                                                               |
-| `rlpdump`  | Developer utility tool to convert binary RLP ([Recursive Length Prefix](https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp)) dumps (data encoding used by the Ethereum protocol both network as well as consensus wise) to user-friendlier hierarchical representation (e.g. `rlpdump --hex CE0183FFFFFFC4C304050583616263`).                                                                                                                                                                                |
-
-## Running `geth`
-
-Going through all the possible command line flags is out of scope here (please consult our
-[CLI Wiki page](https://geth.ethereum.org/docs/fundamentals/command-line-options)),
-but we've enumerated a few common parameter combos to get you up to speed quickly
-on how you can run your own `geth` instance.
-
-### Hardware Requirements
-
-Minimum:
-
-* CPU with 2+ cores
-* 4GB RAM
-* 1TB free storage space to sync the Mainnet
-* 8 MBit/sec download Internet service
-
-Recommended:
-
-* Fast CPU with 4+ cores
-* 16GB+ RAM
-* High-performance SSD with at least 1TB of free space
-* 25+ MBit/sec download Internet service
-
-### Full node on the main Ethereum network
-
-By far the most common scenario is people wanting to simply interact with the Ethereum
-network: create accounts; transfer funds; deploy and interact with contracts. For this
-particular use case, the user doesn't care about years-old historical data, so we can
-sync quickly to the current state of the network. To do so:
-
-```shell
-$ geth console
-```
-
-This command will:
- * Start `geth` in snap sync mode (default, can be changed with the `--syncmode` flag),
-   causing it to download more data in exchange for avoiding processing the entire history
-   of the Ethereum network, which is very CPU intensive.
- * Start the built-in interactive [JavaScript console](https://geth.ethereum.org/docs/interacting-with-geth/javascript-console),
-   (via the trailing `console` subcommand) through which you can interact using [`web3` methods](https://github.com/ChainSafe/web3.js/blob/0.20.7/DOCUMENTATION.md) 
-   (note: the `web3` version bundled within `geth` is very old, and not up to date with official docs),
-   as well as `geth`'s own [management APIs](https://geth.ethereum.org/docs/interacting-with-geth/rpc).
-   This tool is optional and if you leave it out you can always attach it to an already running
-   `geth` instance with `geth attach`.
-
-### A Full node on the Görli test network
-
-Transitioning towards developers, if you'd like to play around with creating Ethereum
-contracts, you almost certainly would like to do that without any real money involved until
-you get the hang of the entire system. In other words, instead of attaching to the main
-network, you want to join the **test** network with your node, which is fully equivalent to
-the main network, but with play-Ether only.
-
-```shell
-$ geth --goerli console
-```
-
-The `console` subcommand has the same meaning as above and is equally
-useful on the testnet too.
-
-Specifying the `--goerli` flag, however, will reconfigure your `geth` instance a bit:
-
- * Instead of connecting to the main Ethereum network, the client will connect to the Görli
-   test network, which uses different P2P bootnodes, different network IDs and genesis
-   states.
- * Instead of using the default data directory (`~/.ethereum` on Linux for example), `geth`
-   will nest itself one level deeper into a `goerli` subfolder (`~/.ethereum/goerli` on
-   Linux). Note, on OSX and Linux this also means that attaching to a running testnet node
-   requires the use of a custom endpoint since `geth attach` will try to attach to a
-   production node endpoint by default, e.g.,
-   `geth attach <datadir>/goerli/geth.ipc`. Windows users are not affected by
-   this.
-
-*Note: Although some internal protective measures prevent transactions from
-crossing over between the main network and test network, you should always
-use separate accounts for play and real money. Unless you manually move
-accounts, `geth` will by default correctly separate the two networks and will not make any
-accounts available between them.*
-
-### Configuration
-
-As an alternative to passing the numerous flags to the `geth` binary, you can also pass a
-configuration file via:
-
-```shell
-$ geth --config /path/to/your_config.toml
-```
-
-To get an idea of how the file should look like you can use the `dumpconfig` subcommand to
-export your existing configuration:
-
-```shell
-$ geth --your-favourite-flags dumpconfig
-```
-
-*Note: This works only with `geth` v1.6.0 and above.*
-
-#### Docker quick start
-
-One of the quickest ways to get Ethereum up and running on your machine is by using
-Docker:
-
-```shell
-docker run -d --name ethereum-node -v /Users/alice/ethereum:/root \
-           -p 8545:8545 -p 30303:30303 \
-           ethereum/client-go
-```
-
-This will start `geth` in snap-sync mode with a DB memory allowance of 1GB, as the
-above command does.  It will also create a persistent volume in your home directory for
-saving your blockchain as well as map the default ports. There is also an `alpine` tag
-available for a slim version of the image.
-
-Do not forget `--http.addr 0.0.0.0`, if you want to access RPC from other containers
-and/or hosts. By default, `geth` binds to the local interface and RPC endpoints are not
-accessible from the outside.
-
-### Programmatically interfacing `geth` nodes
-
-As a developer, sooner rather than later you'll want to start interacting with `geth` and the
-Ethereum network via your own programs and not manually through the console. To aid
-this, `geth` has built-in support for a JSON-RPC based APIs ([standard APIs](https://ethereum.github.io/execution-apis/api-documentation/)
-and [`geth` specific APIs](https://geth.ethereum.org/docs/interacting-with-geth/rpc)).
-These can be exposed via HTTP, WebSockets and IPC (UNIX sockets on UNIX based
-platforms, and named pipes on Windows).
-
-The IPC interface is enabled by default and exposes all the APIs supported by `geth`,
-whereas the HTTP and WS interfaces need to manually be enabled and only expose a
-subset of APIs due to security reasons. These can be turned on/off and configured as
-you'd expect.
-
-HTTP based JSON-RPC API options:
-
-  * `--http` Enable the HTTP-RPC server
-  * `--http.addr` HTTP-RPC server listening interface (default: `localhost`)
-  * `--http.port` HTTP-RPC server listening port (default: `8545`)
-  * `--http.api` API's offered over the HTTP-RPC interface (default: `eth,net,web3`)
-  * `--http.corsdomain` Comma separated list of domains from which to accept cross origin requests (browser enforced)
-  * `--ws` Enable the WS-RPC server
-  * `--ws.addr` WS-RPC server listening interface (default: `localhost`)
-  * `--ws.port` WS-RPC server listening port (default: `8546`)
-  * `--ws.api` API's offered over the WS-RPC interface (default: `eth,net,web3`)
-  * `--ws.origins` Origins from which to accept WebSocket requests
-  * `--ipcdisable` Disable the IPC-RPC server
-  * `--ipcapi` API's offered over the IPC-RPC interface (default: `admin,debug,eth,miner,net,personal,txpool,web3`)
-  * `--ipcpath` Filename for IPC socket/pipe within the datadir (explicit paths escape it)
-
-You'll need to use your own programming environments' capabilities (libraries, tools, etc) to
-connect via HTTP, WS or IPC to a `geth` node configured with the above flags and you'll
-need to speak [JSON-RPC](https://www.jsonrpc.org/specification) on all transports. You
-can reuse the same connection for multiple requests!
-
-**Note: Please understand the security implications of opening up an HTTP/WS based
-transport before doing so! Hackers on the internet are actively trying to subvert
-Ethereum nodes with exposed APIs! Further, all browser tabs can access locally
-running web servers, so malicious web pages could try to subvert locally available
-APIs!**
-
-### Operating a private network
-
-Maintaining your own private network is more involved as a lot of configurations taken for
-granted in the official networks need to be manually set up.
-
-#### Defining the private genesis state
-
-First, you'll need to create the genesis state of your networks, which all nodes need to be
-aware of and agree upon. This consists of a small JSON file (e.g. call it `genesis.json`):
-
-```json
-{
-  "config": {
-    "chainId": <arbitrary positive integer>,
-    "homesteadBlock": 0,
-    "eip150Block": 0,
-    "eip155Block": 0,
-    "eip158Block": 0,
-    "byzantiumBlock": 0,
-    "constantinopleBlock": 0,
-    "petersburgBlock": 0,
-    "istanbulBlock": 0,
-    "berlinBlock": 0,
-    "londonBlock": 0
-  },
-  "alloc": {},
-  "coinbase": "0x0000000000000000000000000000000000000000",
-  "difficulty": "0x20000",
-  "extraData": "",
-  "gasLimit": "0x2fefd8",
-  "nonce": "0x0000000000000042",
-  "mixhash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-  "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-  "timestamp": "0x00"
-}
-```
-
-The above fields should be fine for most purposes, although we'd recommend changing
-the `nonce` to some random value so you prevent unknown remote nodes from being able
-to connect to you. If you'd like to pre-fund some accounts for easier testing, create
-the accounts and populate the `alloc` field with their addresses.
-
-```json
-"alloc": {
-  "0x0000000000000000000000000000000000000001": {
-    "balance": "111111111"
-  },
-  "0x0000000000000000000000000000000000000002": {
-    "balance": "222222222"
-  }
-}
-```
-
-With the genesis state defined in the above JSON file, you'll need to initialize **every**
-`geth` node with it prior to starting it up to ensure all blockchain parameters are correctly
-set:
-
-```shell
-$ geth init path/to/genesis.json
-```
-
-#### Creating the rendezvous point
-
-With all nodes that you want to run initialized to the desired genesis state, you'll need to
-start a bootstrap node that others can use to find each other in your network and/or over
-the internet. The clean way is to configure and run a dedicated bootnode:
-
-```shell
-$ bootnode --genkey=boot.key
-$ bootnode --nodekey=boot.key
-```
-
-With the bootnode online, it will display an [`enode` URL](https://ethereum.org/en/developers/docs/networking-layer/network-addresses/#enode)
-that other nodes can use to connect to it and exchange peer information. Make sure to
-replace the displayed IP address information (most probably `[::]`) with your externally
-accessible IP to get the actual `enode` URL.
-
-*Note: You could also use a full-fledged `geth` node as a bootnode, but it's the less
-recommended way.*
-
-#### Starting up your member nodes
-
-With the bootnode operational and externally reachable (you can try
-`telnet <ip> <port>` to ensure it's indeed reachable), start every subsequent `geth`
-node pointed to the bootnode for peer discovery via the `--bootnodes` flag. It will
-probably also be desirable to keep the data directory of your private network separated, so
-do also specify a custom `--datadir` flag.
-
-```shell
-$ geth --datadir=path/to/custom/data/folder --bootnodes=<bootnode-enode-url-from-above>
-```
-
-*Note: Since your network will be completely cut off from the main and test networks, you'll
-also need to configure a miner to process transactions and create new blocks for you.*
-
-#### Running a private miner
-
-
-In a private network setting a single CPU miner instance is more than enough for
-practical purposes as it can produce a stable stream of blocks at the correct intervals
-without needing heavy resources (consider running on a single thread, no need for multiple
-ones either). To start a `geth` instance for mining, run it with all your usual flags, extended
-by:
-
-```shell
-$ geth <usual-flags> --mine --miner.threads=1 --miner.etherbase=0x0000000000000000000000000000000000000000
-```
-
-Which will start mining blocks and transactions on a single CPU thread, crediting all
-proceedings to the account specified by `--miner.etherbase`. You can further tune the mining
-by changing the default gas limit blocks converge to (`--miner.targetgaslimit`) and the price
-transactions are accepted at (`--miner.gasprice`).
-
-## Contribution
-
-Contributions to the fork-specific changes are welcome. Please fork, fix, commit,
-and open a pull request against the **`clique-cancun`** branch (this fork's default
-branch), not `master`. Keep fork changes gated on `Clique != nil` / `zeroBaseFee`
-so stock behaviour stays intact, and add or update a `smoke-test/` case when you
-change consensus or free-gas behaviour.
-
-Please make sure your contributions adhere to the coding guidelines:
-
- * Code must adhere to the official Go [formatting](https://golang.org/doc/effective_go.html#formatting)
-   guidelines (i.e. uses [gofmt](https://golang.org/cmd/gofmt/)).
- * Code must be documented adhering to the official Go [commentary](https://golang.org/doc/effective_go.html#commentary)
-   guidelines.
- * Commit messages should be prefixed with the package(s) they modify.
-   * E.g. "eth, rpc: make trace configs optional"
-
-For changes to the underlying client that are not Clique/Cancun/free-gas specific,
-consider contributing them upstream to [go-ethereum](https://github.com/ethereum/go-ethereum)
-instead.
-
-## License
-
-The go-ethereum library (i.e. all code outside of the `cmd` directory) is licensed under the
+Inherited from go-ethereum and shipped unchanged:
+
+| Command | Description |
+|---|---|
+| **`geth`** | The main client, and the one you want. Entry point into the network, runnable as a full or archive node, exposing JSON-RPC over HTTP, WebSocket and IPC. `geth --help` for options. |
+| `clef` | Stand-alone signing tool, usable as a backend signer for `geth`. |
+| `abigen` | Generates type-safe Go bindings from contract ABIs or Solidity sources. |
+| `evm` | Developer EVM for running bytecode snippets in a configurable environment. |
+| `rlpdump` | Converts binary RLP dumps into a readable form. |
+| `devp2p` | Utilities for interacting with nodes at the networking layer. |
+| `bootnode` | Discovery-only node, useful as a lightweight bootstrap peer. |
+
+## Contributing
+
+Contributions to the fork-specific changes are welcome. Fork, fix, commit and
+open a pull request — keeping changes gated on `Clique != nil` / `zeroBaseFee`
+so stock behaviour stays intact, and adding or updating a
+[`smoke-test/`](smoke-test/) case when you change consensus or free-gas
+behaviour.
+
+Code should follow the standard Go [formatting](https://golang.org/doc/effective_go.html#formatting)
+and [commentary](https://golang.org/doc/effective_go.html#commentary) guidelines,
+with commit messages prefixed by the package they modify — e.g.
+`eth, rpc: make trace configs optional`.
+
+For changes to the underlying client that are **not** Clique, Cancun or
+free-gas specific, consider contributing them upstream to
+[go-ethereum](https://github.com/ethereum/go-ethereum) instead.
+
+Report security issues privately — see [`SECURITY.md`](SECURITY.md).
+
+## Attribution and licence
+
+This is a **fork of [ethereum/go-ethereum](https://github.com/ethereum/go-ethereum)**,
+pinned to the `v1.13.15` release — the last version that shipped Clique. It is
+**not affiliated with or endorsed by** the go-ethereum project.
+
+The go-ethereum library (i.e. all code outside of the `cmd` directory) is
+licensed under the
 [GNU Lesser General Public License v3.0](https://www.gnu.org/licenses/lgpl-3.0.en.html),
-also included in our repository in the `COPYING.LESSER` file.
+also included in this repository in the [`COPYING.LESSER`](COPYING.LESSER) file.
 
-The go-ethereum binaries (i.e. all code inside of the `cmd` directory) are licensed under the
-[GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html), also
-included in our repository in the `COPYING` file.
+The go-ethereum binaries (i.e. all code inside of the `cmd` directory) are
+licensed under the
+[GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html),
+also included in this repository in the [`COPYING`](COPYING) file.
+
+See [`AUTHORS`](AUTHORS) for the upstream authors this work builds on.
+
+**PureChain-original works** — the Smart Auto-Mining (SAM) and PoA² controllers
+in [`rehearsal/scripts/`](rehearsal/scripts/) — are **Apache-2.0**, copyright
+PureChain, per [`LICENSE-purechain`](LICENSE-purechain). They are JavaScript run
+*by* geth's console rather than code linked into it, so they are separate works
+and not derivatives of go-ethereum.
