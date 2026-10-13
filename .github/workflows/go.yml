@@ -2,9 +2,9 @@ name: CI (clique-cancun fork)
 
 on:
   push:
-    branches: [ clique-cancun, master ]
+    branches: [ main ]
   pull_request:
-    branches: [ clique-cancun, master ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
