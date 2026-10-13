@@ -499,3 +499,37 @@ func testGetBlockReceipts(t *testing.T, protocol uint) {
 		t.Errorf("receipts mismatch: %v", err)
 	}
 }
+
+// Tests that pooled transaction retrievals stop after maxPooledTxServe lookups,
+// even if the requested hashes are unknown and the response stays empty.
+func TestGetPooledTransactionsLookupCap(t *testing.T) {
+	backend := newTestBackend(0)
+	defer backend.close()
+
+	tx, err := types.SignTx(
+		types.NewTransaction(0, testAddr, big.NewInt(10_000), params.TxGas, big.NewInt(1_000_000_000), nil),
+		types.LatestSigner(params.TestChainConfig),
+		testKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := backend.txpool.Add([]*types.Transaction{tx}, true, true); errs[0] != nil {
+		t.Fatal(errs[0])
+	}
+	// Pad the request with unknown hashes so the known one lands at the given index
+	request := func(index int) GetPooledTransactionsRequest {
+		query := make(GetPooledTransactionsRequest, index+1)
+		for i := 0; i < index; i++ {
+			query[i] = common.BigToHash(big.NewInt(int64(i + 1)))
+		}
+		query[index] = tx.Hash()
+		return query
+	}
+	if hashes, _ := answerGetPooledTransactions(backend, request(maxPooledTxServe-1)); len(hashes) != 1 {
+		t.Errorf("transaction within lookup cap not served: have %d, want 1", len(hashes))
+	}
+	if hashes, _ := answerGetPooledTransactions(backend, request(maxPooledTxServe)); len(hashes) != 0 {
+		t.Errorf("transaction beyond lookup cap served: have %d, want 0", len(hashes))
+	}
+}

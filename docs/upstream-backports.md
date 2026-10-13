@@ -1,4 +1,4 @@
-# Upstream backports: go-ethereum v1.13.15 → v1.17.5
+# Upstream backports: go-ethereum v1.13.15 → v1.17.8
 
 This fork is pinned to **go-ethereum v1.13.15**, the last upstream release that
 shipped Clique. Upstream removed Clique in v1.14 and, in the same release,
@@ -10,7 +10,8 @@ This document records what was adopted, what was rejected, and why. It is the
 reference for the next review — start from the "Not adopted" section so the same
 commits are not re-litigated.
 
-Upstream range reviewed: `v1.13.15..v1.17.5` (2,340 commits, 1,878 files).
+Upstream range reviewed: `v1.13.15..v1.17.5` (2,340 commits, 1,878 files), then
+`v1.17.5..v1.17.8` (189 commits) — see the last section.
 
 ---
 
@@ -473,9 +474,8 @@ two-argument invocations are unchanged:
 
     run-all.sh <geth-original> <geth-patched> [geth-previous]
 
-Detail from the mixed-version run, previous build (`clique-cancun` at
-`e3512ec8d`) against this branch, period-1 free-gas chain with Cancun from
-genesis:
+Detail from the mixed-version run, previous release build against this branch,
+period-1 free-gas chain with Cancun from genesis:
 
 | Check | old sealer + new peer | new sealer + old peer |
 |---|---|---|
@@ -540,3 +540,56 @@ Found while reviewing the gas-price oracle against a zero-base-fee chain:
 - With `GPO.Blocks = 20` and a 1 s period, each `eth_gasPrice` after a head change
   fans out up to 40 block fetches that all return zero samples. Consider
   `--gpo.blocks 2`.
+
+## Review: v1.17.5 → v1.17.8 (2026-10-12)
+
+189 commits across v1.17.6 (maintenance), v1.17.7 (packaging re-cut) and v1.17.8
+(security). Nearly all of it is Amsterdam, block-level access lists, eth/69–72,
+snap v2 and Engine API work with no counterpart here.
+
+### Adopted
+
+| Upstream | Change | Why it applies |
+|---|---|---|
+| #35427 | miner: refuse to seal when `StateDB.Error()` is set after `FinalizeAndAssemble` | A validator with a failing database would otherwise seal and broadcast a block built on wrong state. Applied to both `commit()` (the Clique sealing path) and `generateWork()`. `commit()`'s caller discards its error, so the refusal is also logged. Needs the row below: Clique seals a *copy* of the work state. |
+| #29520 (part) | state: `StateDB.Copy()` keeps `dbErr` | v1.13.15's `Copy()` dropped the error, so `commit()` (which gets `work.copy()`) missed read failures from transaction execution, and the copy committed cleanly. Upstream carries `dbErr` in `Copy()` since #29520; only that one line is taken from the larger refactor. With it, `Commit` on the copy also refuses, so the bad block is never written or broadcast. |
+| #35857 | eth: cap `GetPooledTransactions` lookups at 4096 per request | Unknown hashes cost a txpool lookup but add nothing to the response size, so a 10 MB request could force ~300k lookups. Upstream's regression test ported. |
+| #35856 | snap: charge at least one load per trie-node request | Cache hits were free, so the per-request work budget never tripped. Written as an explicit `if` (go.mod is Go 1.20, no builtin `max`). Only reachable when snapshots are enabled. |
+| #35861 | discv4: only bonded peers may make endpoint statements in PING | Prevents unbonded nodes from steering our predicted external IP. Production runs `--nodiscover`, so this is defence in depth. |
+| #35564 | txpool journal: check the replacement's `Close()` before renaming it over the live journal | On a full disk the old code could replace a good journal with a truncated one. |
+
+### Not adopted
+
+- **Inapplicable — code does not exist in v1.13.15:** #35862 / #35904 / #35859
+  (body and receipt shape checks target lazy `rlp.RawList` decoding and eth/69–70;
+  our `BlockBody` is fully decoded and only eth/68 is served), #35881 (sharded
+  JUMPDEST cache), #35821 (prefetcher wait group), #35863 (pion/stun is not a
+  dependency), #35880 (DNS-resolved static nodes), #35587 (`fillMessage`),
+  #35701 / #35888 (abigen v2), #35360 (JSON logger hooks), #35756 (memorydb range delete) and #35644
+  (p2p/pipes).
+- **#35686 bn256 `G2.Neg`:** verified not reachable from the pairing precompile —
+  the Miller loop negates the twist point but never reads its `t` coordinate — so
+  no consensus effect either way. Not needed.
+- **#35576 reject `null` for required RPC arguments:** behaviour change that can
+  break existing clients. Deferred.
+- **#35070 `eth_getLogs` with `fromBlock > toBlock = 0`:** cosmetic (the deeper
+  range check already rejects it). Deferred.
+- **#35397 `eth_createAccessList` for zero-balance senders:** only fails if the fee
+  oracle suggests a non-zero tip. With `--miner.gasprice 0` (see Operational
+  notes) it does not. Our `AccessList` is shaped differently; needs a rewrite, not
+  a cherry-pick. Deferred.
+
+### Verification
+
+`go test` passes for `miner`, `eth/protocols/eth`, `eth/protocols/snap`,
+`core/txpool/...`, `p2p/discover/...` and `consensus/clique`. The ported
+`TestGetPooledTransactionsLookupCap` was confirmed to fail with the cap removed.
+`core/state`, `eth/tracers` (other `Copy()` callers) also pass; the new
+`TestCopyKeepsDatabaseError` was confirmed to fail without the `Copy()` line.
+No consensus rules change; mixed old/new nodes interoperate.
+
+The upgrade rehearsal (previous release → these backports) passed 110/110 gates
+twice: once normally and once with all nodes pinned to two shared CPUs
+(`rehearsal/docker-compose.2cpu.yml`). Stress ceiling 400 tx/s in both. The
+client-name change shipped alongside (see CHANGELOG) was rehearsed separately:
+rolling upgrade under load and PoA² peer matching.

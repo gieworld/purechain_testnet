@@ -26,7 +26,7 @@ binary that runs on any Linux x86-64, including minimal/Alpine containers:
 
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/bin/geth-linux-amd64 ./cmd/geth
-./build/bin/geth-linux-amd64 version   # -> 1.13.15-stable, Git Commit = your HEAD
+./build/bin/geth-linux-amd64 version   # -> 1.13.15-purechain-1.0.1, Git Commit = your HEAD
 ```
 
 The `Git Commit` a release was built from is stated in its GitHub release

@@ -4,7 +4,67 @@ All changes are on top of **go-ethereum v1.13.15** (the last official Clique rel
 
 ---
 
-## [Unreleased] — 2026-08-19 — PoA2 validator-replacement controller
+## v1.0.1 — 2026-10-13 — upstream backports (v1.17.5 → v1.17.8), PureChain client name
+
+Reviewed upstream v1.17.5..v1.17.8 and ported back the fixes that apply. Nothing
+here changes consensus rules or block validity; old and new nodes interoperate.
+Full matrix, including what was rejected and why, in
+[`docs/upstream-backports.md`](docs/upstream-backports.md).
+
+### Changed — the client advertises itself as PureChain
+
+`web3_clientVersion`, the p2p handshake name, `admin.nodeInfo` and the ethstats
+report now read `PureChain/v1.13.15-purechain-1.0.1-<commit>-<date>/…` instead of
+`Geth/v1.13.15-stable-<commit>/…`. The base geth version stays visible on purpose.
+Only the displayed name changed: the datadir layout (`<datadir>/geth/`), nodekey,
+`geth.ipc` and the `geth` command are untouched, so nodes restart onto their
+existing data and keep their enode IDs. The `--identity` a node runs with is
+still part of the name, so PoA²'s peer matching is unaffected. `geth version`
+now prints `Version: 1.13.15-purechain-1.0.1`.
+
+### Fixed — miner refuses to seal on a state read failure
+
+- `miner` (#35427): if the database failed a read while a block was being built,
+  the state — and so the block — may be wrong. The validator now refuses to seal
+  it instead of broadcasting a bad block, on both the Clique sealing path and
+  `generateWork`.
+- `core/state`: `StateDB.Copy()` now keeps the recorded database error. Clique
+  seals a *copy* of the work state, and v1.13.15's `Copy()` dropped the error, so
+  without this the miner check above missed failures from transaction execution
+  and the copy committed cleanly. Upstream has carried it since #29520.
+
+### Security — p2p and sync hardening
+
+- `eth` (#35857): cap `GetPooledTransactions` at 4096 lookups per request.
+  Unknown hashes cost a lookup but add nothing to the response, so a single
+  request could force ~300k lookups.
+- `snap` (#35856): charge at least one load per trie-node request, so requests
+  served from cache can no longer bypass the per-request work budget.
+- `p2p/discover` (#35861): only bonded peers may make statements about our
+  external endpoint.
+
+### Fixed — txpool journal
+
+- `core/txpool/legacypool` (#35564): check the replacement journal's `Close()`
+  before renaming it over the live one; on a full disk the old code could replace
+  a good journal with a truncated one.
+
+### Verified
+
+Unit tests pass for every touched package. The upgrade rehearsal (`rehearsal/`,
+previous release → these backports) passed 110/110 gates twice: once normally
+and once with all nodes pinned to two shared CPUs
+(`rehearsal/docker-compose.2cpu.yml`, new). Stress ceiling 400 tx/s in both.
+
+The client-name change touches only display strings and was rehearsed on its
+own: a rolling upgrade under load passed 45/45 with every node reporting the new
+name, and the PoA² reachability test, the only thing that reads peer names,
+passed 4/4. The remaining phases do not read the client name and were not rerun.
+
+
+---
+
+## v1.0.1 — 2026-08-19 — PoA2 validator-replacement controller
 
 ### Added - `rehearsal/scripts/poa2.js`
 

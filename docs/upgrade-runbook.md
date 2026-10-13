@@ -19,7 +19,7 @@ genesis **before** the activation point, or the chain splits at activation.
 
 ## Phase 0 — Prerequisites
 
-- [ ] Patched `geth` binary built (this fork). Check: `geth version` → `1.13.15-stable`, and the `Git Commit` matches your release commit (see the CHANGELOG **"Release Binary (linux/amd64)"** section).
+- [ ] Patched `geth` binary built (this fork). Check: `geth version` → `1.13.15-purechain-1.0.1`, and the `Git Commit` matches your release commit (see the CHANGELOG **"Release Binary (linux/amd64)"** section).
 - [ ] You can stop/start every node and have shell access to each datadir.
 - [ ] A maintenance window (brief restart of all nodes).
 

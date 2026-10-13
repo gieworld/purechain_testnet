@@ -43,6 +43,7 @@ genesis gasLimit of 30M, the effective limit in practice.
 
     drive.sh          campaign driver — phases with gates (see below)
     docker-compose.yml  6 nodes + 4 automine sidecars + monitor + loadgen
+    docker-compose.2cpu.yml  optional: pin nodes + sidecars onto 2 shared CPUs
     Dockerfile.node   node image recipe, parameterized old/new binary
     genesis.tpl.json  deployment-shaped genesis (fork time stamped at prep)
     scripts/          entrypoint.sh, autoMine-v2.js (SAM), poa2.js (PoA²),
@@ -63,6 +64,13 @@ genesis gasLimit of 30M, the effective limit in practice.
     ./drive.sh all          # complete campaign (~3h), stops at first failed gate
     ./drive.sh prep         # or phase by phase: prep, p1, p2, ... p8
     ./drive.sh down         # tear down (artifacts/ kept)
+
+To run on two shared CPUs like the production host, add the pin file:
+
+    COMPOSE_FILE="docker-compose.yml;docker-compose.override.yml;docker-compose.2cpu.yml" \
+    COMPOSE_PATH_SEPARATOR=";" ./drive.sh all
+
+`prep` wipes `artifacts/`; copy it to `artifacts-<commit>/` first to keep a run.
 
 ## Phases and what each gate proves
 

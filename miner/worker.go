@@ -88,6 +88,7 @@ var (
 	errBlockInterruptedByNewHead  = errors.New("new head arrived while building block")
 	errBlockInterruptedByRecommit = errors.New("recommit interrupt while building block")
 	errBlockInterruptedByTimeout  = errors.New("timeout while building block")
+	errStateReadFailure           = errors.New("state read failed while building block")
 )
 
 // environment is the worker's current environment and holds all
@@ -1125,6 +1126,9 @@ func (w *worker) generateWork(params *generateParams) *newPayloadResult {
 	if err != nil {
 		return &newPayloadResult{err: err}
 	}
+	if dbErr := work.state.Error(); dbErr != nil {
+		return &newPayloadResult{err: fmt.Errorf("%w: %v", errStateReadFailure, dbErr)}
+	}
 	return &newPayloadResult{
 		block:    block,
 		fees:     totalFees(block, work.receipts),
@@ -1213,6 +1217,12 @@ func (w *worker) commit(env *environment, interval func(), update bool, start ti
 		block, err := w.engine.FinalizeAndAssemble(w.chain, env.header, env.state, env.txs, nil, env.receipts, nil)
 		if err != nil {
 			return err
+		}
+		// A database error during building or root calculation means the state
+		// may be wrong. Sealing it would broadcast a bad block; bail out instead.
+		if dbErr := env.state.Error(); dbErr != nil {
+			log.Error("Refusing to seal block after state read failure", "number", block.Number(), "err", dbErr)
+			return fmt.Errorf("%w: %v", errStateReadFailure, dbErr)
 		}
 		// If we're post merge, just ignore
 		if !w.isTTDReached(block.Header()) {

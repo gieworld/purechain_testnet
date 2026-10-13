@@ -297,9 +297,10 @@ func (c *Config) ExtRPCEnabled() bool {
 // NodeName returns the devp2p node identifier.
 func (c *Config) NodeName() string {
 	name := c.name()
-	// Backwards compatibility: previous versions used title-cased "Geth", keep that.
+	// Advertise as PureChain. Only the displayed name changes: c.name() still
+	// returns "geth", which keeps the datadir layout and nodekey where they are.
 	if name == "geth" || name == "geth-testnet" {
-		name = "Geth"
+		name = "PureChain"
 	}
 	if c.UserIdent != "" {
 		name += "/" + c.UserIdent

@@ -32,7 +32,7 @@ Download a static binary from the [latest release](https://github.com/gieworld/p
 
 ```bash
 sha256sum -c SHA256SUMS.txt
-./purechain-geth-v1.0.0-linux-amd64 version    # Git Commit must match the release
+./purechain-geth-v1.0.1-linux-amd64 version    # Git Commit must match the release
 ```
 
 - **Connect to the public network** — RPC endpoint, chain ID and wallet setup

@@ -52,7 +52,7 @@ logs/
 tests/spec-tests/
 
 # rehearsal harness: generated/state/secrets stay local
-/rehearsal/artifacts/
+/rehearsal/artifacts*/
 /rehearsal/data/
 /rehearsal/bin/
 /rehearsal/secrets/

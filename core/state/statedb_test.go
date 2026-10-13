@@ -1102,6 +1102,22 @@ func TestStateDBTransientStorage(t *testing.T) {
 	}
 }
 
+// Tests that a copied state keeps the database error of its origin, so that
+// a block built on a state with failed reads can't be sealed or committed
+// from the copy.
+func TestCopyKeepsDatabaseError(t *testing.T) {
+	state, _ := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()), nil)
+	state.setError(errors.New("missing trie node"))
+
+	cpy := state.Copy()
+	if cpy.Error() == nil {
+		t.Fatal("database error lost on copy")
+	}
+	if _, err := cpy.Commit(0, false); err == nil {
+		t.Fatal("copy committed despite database error")
+	}
+}
+
 func TestResetObject(t *testing.T) {
 	var (
 		disk     = rawdb.NewMemoryDatabase()

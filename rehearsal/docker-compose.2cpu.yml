@@ -1,0 +1,25 @@
+# Pins every container that runs on the production host onto the SAME two
+# CPUs, so the six nodes and their sidecars compete for 2 vCPUs the way they do
+# there. Test tooling (monitor, loadgen) stays unpinned so it doesn't distort
+# the measurement. Use:
+#   COMPOSE_FILE="docker-compose.yml;docker-compose.override.yml;docker-compose.2cpu.yml" \
+#   COMPOSE_PATH_SEPARATOR=";" ./drive.sh all
+services:
+  node1: { cpuset: "0,1" }
+  node2: { cpuset: "0,1" }
+  node3: { cpuset: "0,1" }
+  node4: { cpuset: "0,1" }
+  node5: { cpuset: "0,1" }
+  node6: { cpuset: "0,1" }
+  automine-node1: { cpuset: "0,1" }
+  automine-node2: { cpuset: "0,1" }
+  automine-node3: { cpuset: "0,1" }
+  automine-node4: { cpuset: "0,1" }
+  automine-node5: { cpuset: "0,1" }
+  automine-node6: { cpuset: "0,1" }
+  poa2-node1: { cpuset: "0,1" }
+  poa2-node2: { cpuset: "0,1" }
+  poa2-node3: { cpuset: "0,1" }
+  poa2-node4: { cpuset: "0,1" }
+  poa2-node5: { cpuset: "0,1" }
+  poa2-node6: { cpuset: "0,1" }
